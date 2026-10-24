@@ -12,6 +12,10 @@ Stopping winptp gives the touchpad straight back to libinput. A small
 [settings app](#settings-app) lets you change everything without editing
 files.
 
+<p align="center">
+  <img src="docs/screenshots/settings-gestures.png" width="520" alt="The winptp settings app, Gestures tab">
+</p>
+
 > **Status:** works well on the author's laptop and has been tested only
 > there: Lenovo IdeaPad Flex-14API (81SS) with a Synaptics 06CB:7F28 I2C
 > touchpad, Kubuntu 26.10, Plasma 6.7 on Wayland. Other precision
