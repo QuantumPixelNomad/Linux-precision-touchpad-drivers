@@ -3,7 +3,7 @@ Version: @VERSION@
 Architecture: all
 Maintainer: Abdulrahman <195754713+QuantumPixelNomad@users.noreply.github.com>
 Depends: python3 (>= 3.11), python3-evdev, systemd
-Recommends: kwin-wayland | kwin-x11
+Recommends: kwin-wayland | kwin-x11, python3-pyside6.qtwidgets | python3-pyqt6, pkexec | policykit-1
 Section: misc
 Priority: optional
 Homepage: https://github.com/QuantumPixelNomad/Linux-precision-touchpad-drivers

@@ -65,8 +65,15 @@ Meta+Alt+N. Or set `tap_four` to any other key combo.
 
 ## Settings
 
-Edit `/etc/winptp/winptp.toml`, then run `sudo systemctl restart winptp`.
-Useful ones:
+Open **Touchpad (winptp)** from the app launcher, or run `winptp-settings`.
+It has tabs for pointer speed, taps, scrolling and gestures. **Apply** asks
+for your password once, saves `/etc/winptp/winptp.toml` (the old file is
+kept as `winptp.toml.bak`) and restarts winptp. Comments and settings the
+app does not show are left as they are. It needs PySide6
+(`sudo apt install python3-pyside6.qtwidgets`) or PyQt6.
+
+You can also edit `/etc/winptp/winptp.toml` by hand, then run
+`sudo systemctl restart winptp`. Useful ones:
 
 | Setting | What it does |
 |---|---|
@@ -93,10 +100,12 @@ The touchpad goes straight back to plain libinput. Your settings in
     python3 -m unittest discover tests   # engine tests, no hardware needed
     ./build-deb.sh                       # builds dist/winptp_<version>_all.deb
     sudo python3 -m winptp -v            # run in the foreground with logging
+    python3 -m winptp.settings packaging/winptp.toml   # settings window on a copy
 
 `winptp/engine.py` is a pure state machine (touch frames in, actions out),
 so most behaviour can be tested without a touchpad. `winptp/daemon.py`
-does the evdev/uinput plumbing.
+does the evdev/uinput plumbing. `winptp/settings.py` is the Qt settings
+app; it hands the new file to the `winptp-apply` helper through pkexec.
 
 How the project came about: [docs/HOW-IT-WAS-MADE.md](docs/HOW-IT-WAS-MADE.md).
 

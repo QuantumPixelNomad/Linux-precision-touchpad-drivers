@@ -1,0 +1,14 @@
+#!/bin/sh
+# Root helper for winptp-settings: read a new winptp.toml on stdin, check
+# that it parses, install it and restart winptp. Run through pkexec.
+set -eu
+conf=/etc/winptp/winptp.toml
+tmp="$(mktemp /etc/winptp/.winptp.toml.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+head -c 65536 > "$tmp"
+/usr/bin/python3 -I -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$tmp" \
+  || { echo "winptp-apply: not valid TOML, nothing changed" >&2; exit 2; }
+chmod 644 "$tmp"
+[ -f "$conf" ] && cp -p "$conf" "$conf.bak"
+mv -f "$tmp" "$conf"
+systemctl restart winptp.service
