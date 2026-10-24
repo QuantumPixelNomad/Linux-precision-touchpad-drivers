@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tomllib
 
-from .engine import Config
+from .engine import AAP_LEVELS, Config
 
 CONFIG_PATH = "/etc/winptp/winptp.toml"
 APPLY_HELPER = "/opt/winptp/winptp-apply"
@@ -44,6 +44,41 @@ SWIPE_PRESETS = [
 ]
 
 DPI_SCALES = [100, 125, 150, 175, 200]
+
+# Fine-tuning tab: (group, [(key, label, unit, min, max, step, tooltip)])
+FINE_TUNING = [
+    ("Three and four finger swipes", [
+        ("gesture_start_mm", "Swipe starts after", "mm", 1, 30, 0.5,
+         "How far the fingers must travel before a swipe fires"),
+        ("gesture4_vertical_mm", "Four fingers up/down start after", "mm", 1, 30, 0.5,
+         "Four-finger up/down usually needs less travel than sideways"),
+        ("alt_tab_step_mm", "App switcher: travel per window", "mm", 2, 50, 0.5,
+         "With three fingers held down sideways, how far to move to step "
+         "to the next window. Smaller = faster"),
+    ]),
+    ("Taps", [
+        ("tap_max_ms", "Longest tap", "ms", 50, 1000, 10,
+         "A touch held longer than this is not a tap"),
+        ("tap_max_move_mm", "Tap may move up to", "mm", 0.5, 10, 0.5, None),
+        ("tap_drag_window_ms", "Tap-and-drag: touch again within", "ms", 50, 1000, 10,
+         "Time after a tap in which touching again starts a drag"),
+        ("tap_drag_max_mm", "Tap-and-drag: touch again within", "mm", 1, 40, 0.5,
+         "How close to the tap the second touch must land"),
+    ]),
+    ("Scrolling and zoom", [
+        ("inertia_tau_ms", "Inertia glide", "ms", 50, 2000, 25,
+         "How long scrolling keeps gliding after the fingers lift. "
+         "Larger = longer glide"),
+        ("pinch_mm_per_step", "Pinch: travel per zoom step", "mm", 2, 40, 0.5,
+         "Used when native pinch is unavailable (Ctrl+wheel zoom)"),
+    ]),
+    ("Edges", [
+        ("button_zone_mm", "Click strip at the bottom", "mm", 0, 30, 0.5,
+         "Height of the strip where a resting thumb is ignored and the "
+         "right-click corner lives"),
+        ("edge_reject_mm", "Ignore touches at the side edges", "mm", 0, 10, 0.5, None),
+    ]),
+]
 
 
 def default_config():
@@ -216,6 +251,7 @@ def build_window(path=CONFIG_PATH):
             tabs.addTab(self._taps_tab(), "Taps")
             tabs.addTab(self._scroll_tab(), "Scroll && zoom")
             tabs.addTab(self._gestures_tab(), "Gestures")
+            tabs.addTab(self._fine_tab(), "Fine-tuning")
 
             self.status = QtWidgets.QLabel()
             self.status.setWordWrap(True)
@@ -241,7 +277,7 @@ def build_window(path=CONFIG_PATH):
             layout.addWidget(tabs)
             layout.addWidget(self.status)
             layout.addLayout(buttons)
-            self.resize(520, 420)
+            self.resize(540, 520)
             self.load()
 
         # -- tabs
@@ -291,7 +327,36 @@ def build_window(path=CONFIG_PATH):
             palm.setToolTip("How long taps and movement are ignored after typing")
             form.addRow("Palm check while typing:", palm)
             self.fields["aap_threshold"] = palm
+
+            self.custom_typing = QtWidgets.QCheckBox("Set my own delays")
+            form.addRow(self.custom_typing)
+            for key, label in (("typing_tap_block_ms", "Ignore taps after a key for:"),
+                               ("typing_move_block_ms", "Ignore movement after a key for:")):
+                spin = self._spin("ms", 0, 3000, 50)
+                form.addRow(label, spin)
+                self.fields[key] = spin
+            self.custom_typing.toggled.connect(self._typing_mode)
+            palm.currentIndexChanged.connect(lambda _: self._typing_mode())
             return page
+
+        def _spin(self, unit, lo, hi, step):
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setDecimals(0 if step >= 1 else 1)
+            spin.setRange(lo, hi)
+            spin.setSingleStep(step)
+            spin.setSuffix(" " + unit)
+            return spin
+
+        def _typing_mode(self):
+            """Custom delays: spin boxes editable; else they show the level's delays."""
+            custom = self.custom_typing.isChecked()
+            self.fields["aap_threshold"].setEnabled(not custom)
+            level = self.fields["aap_threshold"].currentData()
+            for i, key in enumerate(("typing_tap_block_ms", "typing_move_block_ms")):
+                spin = self.fields[key]
+                spin.setEnabled(custom)
+                if not custom and level is not None:
+                    spin.setValue(AAP_LEVELS[level][i])
 
         def _taps_tab(self):
             page, form = self._form()
@@ -336,6 +401,26 @@ def build_window(path=CONFIG_PATH):
             form.addRow(hint)
             return page
 
+        def _fine_tab(self):
+            page = QtWidgets.QWidget()
+            layout = QtWidgets.QVBoxLayout(page)
+            for title, rows in FINE_TUNING:
+                group = QtWidgets.QGroupBox(title)
+                form = QtWidgets.QFormLayout(group)
+                for key, label, unit, lo, hi, step, tip in rows:
+                    spin = self._spin(unit, lo, hi, step)
+                    if tip:
+                        spin.setToolTip(tip)
+                    form.addRow(label + ":", spin)
+                    self.fields[key] = spin
+                layout.addWidget(group)
+            layout.addStretch()
+            scroll = QtWidgets.QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+            scroll.setWidget(page)
+            return scroll
+
         # -- data
 
         def _fill(self, values):
@@ -347,6 +432,8 @@ def build_window(path=CONFIG_PATH):
                     w.setValue(int(v))
                 elif isinstance(w, ActionBox):
                     w.set_value(str(v))
+                elif isinstance(w, QtWidgets.QDoubleSpinBox):
+                    w.setValue(float(v))
                 elif key == "screen_dpi":
                     i = w.findData(float(v))
                     if i < 0:
@@ -356,6 +443,15 @@ def build_window(path=CONFIG_PATH):
                 else:
                     i = w.findData(int(v))
                     w.setCurrentIndex(max(i, 0))
+            custom = (values["typing_tap_block_ms"] >= 0
+                      or values["typing_move_block_ms"] >= 0)
+            self.custom_typing.setChecked(custom)
+            self._typing_mode()
+            if custom:  # one custom value may still be -1: show what applies
+                level = AAP_LEVELS[int(values["aap_threshold"])]
+                for i, key in enumerate(("typing_tap_block_ms", "typing_move_block_ms")):
+                    if values[key] < 0:
+                        self.fields[key].setValue(level[i])
 
         def _collect(self):
             values = dict(self.values)
@@ -366,8 +462,12 @@ def build_window(path=CONFIG_PATH):
                     values[key] = w.value()
                 elif isinstance(w, ActionBox):
                     values[key] = w.value()
+                elif isinstance(w, QtWidgets.QDoubleSpinBox):
+                    values[key] = w.value()
                 else:
                     values[key] = w.currentData()
+            if not self.custom_typing.isChecked():
+                values["typing_tap_block_ms"] = values["typing_move_block_ms"] = -1.0
             return values
 
         def load(self):

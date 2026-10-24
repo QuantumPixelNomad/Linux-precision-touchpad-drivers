@@ -66,7 +66,9 @@ Meta+Alt+N. Or set `tap_four` to any other key combo.
 ## Settings
 
 Open **Touchpad (winptp)** from the app launcher, or run `winptp-settings`.
-It has tabs for pointer speed, taps, scrolling and gestures. **Apply** asks
+It has tabs for pointer speed, taps, scrolling and gestures, plus a
+Fine-tuning tab for distances and timings (swipe start distance, app
+switcher step, tap and tap-and-drag limits, inertia length, edge zones). **Apply** asks
 for your password once, saves `/etc/winptp/winptp.toml` (the old file is
 kept as `winptp.toml.bak`) and restarts winptp. Comments and settings the
 app does not show are left as they are. It needs PySide6
@@ -81,6 +83,9 @@ You can also edit `/etc/winptp/winptp.toml` by hand, then run
 | `screen_dpi` | 96 times your display scale, e.g. 120 for 125% |
 | `natural_scroll` | Scroll direction |
 | `aap_threshold` | Palm check while typing, 0 (off) to 4 (strictest) |
+| `typing_tap_block_ms`, `typing_move_block_ms` | Your own palm check delays in ms (-1 = use `aap_threshold`) |
+| `alt_tab_step_mm` | Finger travel per window in the three-finger app switcher |
+| `gesture_start_mm` | Finger travel before a three/four-finger swipe fires |
 | `tap_three`, `tap_four` | `"middle"` or a key combo like `"meta+alt+n"` |
 | `swipe3_*`, `swipe4_*` | Key combos for each swipe; `"alttab"` holds Alt for the switcher |
 
