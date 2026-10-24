@@ -5,10 +5,12 @@ ConditionPathExists=/opt/winptp/winptp/daemon.py
 
 [Service]
 Type=simple
-Environment=PYTHONPATH=/opt/winptp
+# -m finds the package in the (root-owned) working directory. Not -I:
+# it ignores PYTHONPATH and the working directory, so winptp is not found.
+WorkingDirectory=/opt/winptp
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/usr/sbin/modprobe uinput
-ExecStart=/usr/bin/python3 -I -m winptp -c /etc/winptp/winptp.toml
+ExecStart=/usr/bin/python3 -s -m winptp -c /etc/winptp/winptp.toml
 Restart=always
 RestartSec=1
 Nice=-10
