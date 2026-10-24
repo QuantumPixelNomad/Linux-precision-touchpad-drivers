@@ -111,6 +111,8 @@ class Config:
     close_overview: str = "esc"        # 3/4-finger down while Task view is open
     # rejection
     aap_threshold: int = 1             # AAPThreshold; Windows default 2, 1 = shorter
+    typing_tap_block_ms: float = -1.0  # custom palm check delays; -1 = use aap_threshold
+    typing_move_block_ms: float = -1.0
     edge_reject_mm: float = 2.0
 
 
@@ -256,7 +258,7 @@ class Engine:
             if tc is None:
                 edge = x < cfg.edge_reject_mm or x > cfg.width_mm - cfg.edge_reject_mm
                 # AAP curtain: a contact landing right after typing is ignored
-                curtain = t - self.last_key < AAP_LEVELS[cfg.aap_threshold][1] \
+                curtain = t - self.last_key < self._aap()[1] \
                     and self.session is None
                 tc = Touch(x=x, y=y, palm=palm or edge or curtain, x0=x, y0=y, t0=t,
                            resting=y > cfg.height_mm - cfg.button_zone_mm)
@@ -267,6 +269,16 @@ class Engine:
                 tc.max_move = max(tc.max_move, math.hypot(x - tc.x0, y - tc.y0))
                 if tc.resting and tc.max_move > cfg.resting_release_mm:
                     tc.resting = False
+
+    def _aap(self):
+        """(tap, move) suppression after typing, in ms."""
+        cfg = self.cfg
+        tap_ms, move_ms = AAP_LEVELS[cfg.aap_threshold]
+        if cfg.typing_tap_block_ms >= 0:
+            tap_ms = cfg.typing_tap_block_ms
+        if cfg.typing_move_block_ms >= 0:
+            move_ms = cfg.typing_move_block_ms
+        return tap_ms, move_ms
 
     def _fingers(self):
         """Contacts that count as fingers (no palms, no resting thumbs)."""
@@ -279,7 +291,7 @@ class Engine:
 
     def _begin_session(self, t):
         cfg = self.cfg
-        tap_ms, move_ms = AAP_LEVELS[cfg.aap_threshold]
+        tap_ms, move_ms = self._aap()
         f = next(iter(self._fingers().values()), None)
         self.session = Session(t0=t, tap_blocked=t - self.last_key < tap_ms,
                                move_blocked=t - self.last_key < move_ms,
@@ -439,7 +451,7 @@ class Engine:
             if s and s.move_blocked and not self.dragging:
                 # AAP holds the cursor only until the delay after the last
                 # key has passed, not for the whole contact
-                if t - self.last_key < AAP_LEVELS[cfg.aap_threshold][1]:
+                if t - self.last_key < self._aap()[1]:
                     return
                 s.move_blocked = False
             self._pointer(t, dx, dy, fingers)

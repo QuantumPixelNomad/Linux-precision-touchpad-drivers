@@ -105,6 +105,22 @@ class TestTaps(unittest.TestCase):
         p.wait(300)
         self.assertEqual(p.kinds("button"), [])
 
+    def test_custom_typing_delay(self):
+        p = Pad(typing_tap_block_ms=0.0)
+        p.e.key_activity(p.t)
+        p.frame({}, dt=300)  # past the move block, so no curtain
+        p.stroke([(50, 30)], (0, 0), 5)
+        p.lift()
+        p.wait(300)
+        self.assertEqual(len(p.kinds("button")), 2)
+        p = Pad(typing_tap_block_ms=2000.0)
+        p.e.key_activity(p.t)
+        p.frame({}, dt=1500)
+        p.stroke([(50, 30)], (0, 0), 5)
+        p.lift()
+        p.wait(300)
+        self.assertEqual(p.kinds("button"), [])
+
     def test_palm_is_ignored(self):
         p = Pad()
         for _ in range(5):

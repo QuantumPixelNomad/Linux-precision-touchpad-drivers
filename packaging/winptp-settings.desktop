@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Touchpad (winptp)
+GenericName=Touchpad Settings
+Comment=Pointer speed, taps, scrolling and gestures for winptp
+Exec=winptp-settings
+Icon=input-touchpad
+Categories=Settings;HardwareSettings;Qt;KDE;
+Keywords=touchpad;trackpad;gestures;mouse;winptp;
