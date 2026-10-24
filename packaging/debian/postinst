@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+  echo uinput > /etc/modules-load.d/winptp.conf
+  modprobe uinput 2>/dev/null || true
+  # The virtual pointer already carries Windows ballistics: tell KWin not
+  # to accelerate it again (flat profile, speed 0, scroll factor 1).
+  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] && command -v kwriteconfig6 >/dev/null; then
+    for kv in PointerAccelerationProfile=1 PointerAcceleration=0 ScrollFactor=1; do
+      runuser -u "$SUDO_USER" -- kwriteconfig6 --file kcminputrc --group Libinput \
+        --group 7531 --group 20564 --group "winptp pointer" \
+        --key "${kv%%=*}" "${kv#*=}" || true
+    done
+  fi
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable winptp-resume.service >/dev/null
+    systemctl enable winptp.service >/dev/null
+    systemctl restart winptp.service || true
+  fi
+fi
+exit 0

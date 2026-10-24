@@ -1,0 +1,14 @@
+Package: winptp
+Version: @VERSION@
+Architecture: all
+Maintainer: Abdulrahman <195754713+QuantumPixelNomad@users.noreply.github.com>
+Depends: python3 (>= 3.11), python3-evdev, systemd
+Recommends: kwin-wayland | kwin-x11
+Section: misc
+Priority: optional
+Homepage: https://github.com/QuantumPixelNomad/Linux-precision-touchpad-drivers
+Description: Windows Precision Touchpad behaviour for KDE Plasma
+ winptp is a userspace touchpad driver that reproduces how a Windows 10
+ precision touchpad feels: pointer acceleration, taps, palm check,
+ two-finger scrolling with inertia, pinch zoom and 3/4-finger gestures.
+ It grabs the touchpad and drives KWin through virtual uinput devices.

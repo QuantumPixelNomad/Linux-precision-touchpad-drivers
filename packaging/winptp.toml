@@ -1,0 +1,27 @@
+# winptp settings. Edit, then: sudo systemctl restart winptp
+# Defaults match the Windows 10 precision touchpad defaults, plus a few
+# tweaks noted below.
+
+cursor_speed = 10            # Windows CursorSpeed 1-20 (Windows default 10)
+screen_dpi = 120.0           # Windows display DPI: 96 x your scale (1.25 -> 120)
+
+tap_to_click = true
+two_finger_tap = true        # right click
+tap_and_drag = true
+tap_three = "middle"         # Windows option: middle click
+tap_four = "meta+alt+n"      # bind Meta+Alt+N to notifications in Plasma (see README)
+right_click_zone = true      # press the bottom-right corner to right-click
+
+natural_scroll = true        # true = content follows your fingers
+inertia = true
+pinch_zoom = true            # native smooth pinch (Ctrl+wheel fallback)
+
+swipe3_up = "meta+w"         # Task view -> Plasma Overview
+swipe3_down = "meta+d"       # Show desktop
+swipe3_horizontal = "alttab" # app switcher while fingers stay down
+swipe4_up = "meta+w"
+swipe4_down = "meta+d"
+swipe4_left = "meta+ctrl+right"   # swipe left = next desktop (like Windows)
+swipe4_right = "meta+ctrl+left"
+
+aap_threshold = 1            # palm check while typing: 0 off ... 4 strictest (Windows default 2)
