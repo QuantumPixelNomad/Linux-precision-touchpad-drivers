@@ -2,6 +2,8 @@
 # Defaults match the Windows 10 precision touchpad defaults, plus a few
 # tweaks noted below.
 
+mode = "windows"             # "gestures": stock Plasma touchpad + winptp's 3/4-finger gestures
+
 cursor_speed = 10            # Windows CursorSpeed 1-20 (Windows default 10)
 screen_dpi = 120.0           # Windows display DPI: 96 x your scale (1.25 -> 120)
 

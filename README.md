@@ -121,8 +121,23 @@ You can also edit `/etc/winptp/winptp.toml` by hand, then run
 | `tap_three`, `tap_four` | `"middle"` or a key combo like `"meta+alt+n"` |
 | `swipe3_*`, `swipe4_*` | Key combos for each swipe; `"alttab"` holds Alt for the switcher |
 
-While winptp runs, the Touchpad page in System Settings has no effect,
-because winptp owns the touchpad.
+In the default mode the Touchpad page in System Settings has no effect,
+because winptp owns the touchpad. See gestures mode below to change that.
+
+## Gestures mode: stock Plasma touchpad plus winptp's swipes
+
+If you like how Kubuntu's touchpad feels but want winptp's three- and
+four-finger gestures, choose **Plasma default, plus winptp's 3/4-finger
+gestures** at the top of the settings app (or set `mode = "gestures"`).
+
+winptp then passes one- and two-finger input through to libinput
+unchanged, through a virtual copy of your touchpad with the same name and
+IDs. Pointer speed, tapping, scrolling, pinch and palm handling are
+exactly stock, and the Touchpad page in System Settings works again (it
+uses the settings you saved there before). As soon as a third finger
+lands, winptp takes over until all fingers lift, so the three- and
+four-finger swipes and taps are winptp's and Plasma's own gestures never
+fire twice.
 
 ## Uninstall
 

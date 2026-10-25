@@ -60,6 +60,9 @@ class Accelerator:
 
 @dataclass
 class Config:
+    # "windows": winptp does everything. "gestures": winptp only does the
+    # 3/4-finger swipes and taps; 1-2 finger input goes to libinput as is.
+    mode: str = "windows"
     width_mm: float = 102.0
     height_mm: float = 67.0
     # pointer
@@ -182,6 +185,10 @@ class Engine:
         self.tap_pos = (0.0, 0.0)
 
     # ------------------------------------------------------------------ input
+
+    def finger_count(self):
+        """Contacts that count as fingers right now (see _fingers)."""
+        return len(self._fingers())
 
     def key_activity(self, t):
         """A non-modifier key was pressed on a keyboard."""
