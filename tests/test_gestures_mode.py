@@ -48,6 +48,14 @@ class PassthroughTest(unittest.TestCase):
         self.assertEqual(self.out[0], (e.EV_ABS, e.ABS_MT_SLOT, 2))  # slot restated
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 9), self.out)
 
+    def test_unblocks_with_stale_empty_slots(self):
+        # the reader leaves {} entries behind for slots that were lifted
+        self.p.frame([], 0, {}, 3)
+        self.p.frame([], 0, {0: {}, 1: {}, 2: {}}, 0)
+        self.out.clear()
+        self.p.frame(self.down(0, 9, 50, 60), 0, {0: {"id": 9, "ux": 50, "uy": 60}}, 1)
+        self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 9), self.out)
+
     def test_new_contact_position_restated(self):
         raw = [(e.EV_ABS, e.ABS_MT_TRACKING_ID, 3)]   # kernel dropped equal X/Y
         self.p.frame(raw, 1, {1: {"ux": 11, "uy": 22}}, 1)
@@ -93,3 +101,73 @@ class GateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(daemon is None, "python3-evdev not installed")
+class ReaderPassthroughTest(unittest.TestCase):
+    """Real TouchpadReader + Engine + Passthrough on a scripted kernel stream."""
+
+    class Abs:
+        def __init__(self, hi):
+            self.min, self.max, self.resolution = 0, hi, 12
+
+    class Ev:
+        def __init__(self, t, c, v):
+            self.type, self.code, self.value = t, c, v
+
+    class Dev:
+        def __init__(self):
+            self.queue = []
+
+        def absinfo(self, code):
+            return ReaderPassthroughTest.Abs(1224 if code == e.ABS_MT_POSITION_X else 804)
+
+        def read(self):
+            q, self.queue = self.queue, []
+            return q
+
+    def setUp(self):
+        self.dev = self.Dev()
+        self.reader = daemon.TouchpadReader(self.dev)
+        cfg = Config(mode="gestures")
+        daemon.gestures_only(cfg)
+        self.engine = Engine(cfg)
+        self.out = []
+        self.p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev))
+        self.t = 0.0
+
+    def push(self, *events):
+        E = self.Ev
+        self.dev.queue = [E(*ev) for ev in events] + [E(e.EV_SYN, e.SYN_REPORT, 0)]
+        for touches, button in self.reader.events():
+            self.t += 8
+            self.engine.frame(self.t, touches, button)
+            self.p.frame(self.reader.raw, self.reader.raw_slot, self.reader.slots,
+                         self.engine.finger_count())
+
+    def fingers(self, n, tid0, x):
+        evs = []
+        for i in range(n):
+            evs += [(e.EV_ABS, e.ABS_MT_SLOT, i), (e.EV_ABS, e.ABS_MT_TRACKING_ID, tid0 + i),
+                    (e.EV_ABS, e.ABS_MT_POSITION_X, x + 200 * i),
+                    (e.EV_ABS, e.ABS_MT_POSITION_Y, 400)]
+        return evs + [(e.EV_ABS, e.ABS_X, x), (e.EV_ABS, e.ABS_Y, 400)]
+
+    def lift(self, n):
+        evs = []
+        for i in range(n):
+            evs += [(e.EV_ABS, e.ABS_MT_SLOT, i), (e.EV_ABS, e.ABS_MT_TRACKING_ID, -1)]
+        return evs
+
+    def test_pointer_works_after_a_three_finger_swipe(self):
+        self.push(*self.fingers(3, 10, 100))
+        for k in range(5):
+            self.push((e.EV_ABS, e.ABS_MT_SLOT, 0),
+                      (e.EV_ABS, e.ABS_MT_POSITION_Y, 380 - 20 * k))
+        self.push(*self.lift(3))
+        self.assertTrue(self.p.blocked is False)
+        self.out.clear()
+        self.push(*self.fingers(1, 20, 500))
+        self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 20), self.out)
+        self.push((e.EV_ABS, e.ABS_MT_POSITION_X, 520))
+        self.assertIn((e.EV_ABS, e.ABS_MT_POSITION_X, 520), self.out)

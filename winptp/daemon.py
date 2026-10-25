@@ -190,7 +190,9 @@ class Passthrough:
         """Forward one frame. slots: the reader's slot state after it."""
         w = self.write
         if self.blocked:
-            if not slots:
+            # the reader keeps empty entries for unused slots: only a slot
+            # with a tracking id is a finger
+            if not any("id" in st for st in slots.values()):
                 self.blocked = False
             return
         if fingers >= 3:
