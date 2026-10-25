@@ -45,6 +45,14 @@ SWIPE_PRESETS = [
 
 DPI_SCALES = [100, 125, 150, 175, 200]
 
+MODES = [("windows", "Windows precision touchpad (winptp does everything)"),
+         ("gestures", "Plasma default, plus winptp's 3/4-finger gestures")]
+
+# Settings that still matter in gestures mode; the rest is libinput's job.
+GESTURE_KEYS = {"mode", "tap_three", "tap_four", "aap_threshold",
+                "typing_tap_block_ms", "typing_move_block_ms",
+                "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm"}
+
 # Fine-tuning tab: (group, [(key, label, unit, min, max, step, tooltip)])
 FINE_TUNING = [
     ("Three and four finger swipes", [
@@ -246,6 +254,22 @@ def build_window(path=CONFIG_PATH):
             self.values = {}
             self.text = ""
 
+            mode = QtWidgets.QComboBox()
+            for value, label in MODES:
+                mode.addItem(label, value)
+            mode.setToolTip("Plasma default: pointer, taps, scrolling and pinch "
+                            "work exactly like stock Kubuntu and follow System "
+                            "Settings > Touchpad. winptp only adds the three- and "
+                            "four-finger swipes and taps.")
+            self.fields["mode"] = mode
+            self.mode_note = QtWidgets.QLabel(
+                "Pointer, taps, scrolling and pinch follow <b>System Settings &gt; "
+                "Touchpad</b>. Only the gesture settings below apply.")
+            self.mode_note.setWordWrap(True)
+            top = QtWidgets.QFormLayout()
+            top.addRow("Touchpad behaviour:", mode)
+            top.addRow(self.mode_note)
+
             tabs = QtWidgets.QTabWidget()
             tabs.addTab(self._pointer_tab(), "Pointer")
             tabs.addTab(self._taps_tab(), "Taps")
@@ -274,10 +298,12 @@ def build_window(path=CONFIG_PATH):
             buttons.addWidget(self.apply)
 
             layout = QtWidgets.QVBoxLayout(self)
+            layout.addLayout(top)
             layout.addWidget(tabs)
             layout.addWidget(self.status)
             layout.addLayout(buttons)
-            self.resize(540, 520)
+            self.resize(540, 580)
+            mode.currentIndexChanged.connect(lambda _: self._mode_changed())
             self.load()
 
         # -- tabs
@@ -346,6 +372,13 @@ def build_window(path=CONFIG_PATH):
             spin.setSingleStep(step)
             spin.setSuffix(" " + unit)
             return spin
+
+        def _mode_changed(self):
+            gestures = self.fields["mode"].currentData() == "gestures"
+            self.mode_note.setVisible(gestures)
+            for key, w in self.fields.items():
+                if key not in GESTURE_KEYS and not key.startswith("swipe"):
+                    w.setEnabled(not gestures)
 
         def _typing_mode(self):
             """Custom delays: spin boxes editable; else they show the level's delays."""
@@ -434,6 +467,8 @@ def build_window(path=CONFIG_PATH):
                     w.set_value(str(v))
                 elif isinstance(w, QtWidgets.QDoubleSpinBox):
                     w.setValue(float(v))
+                elif key == "mode":
+                    w.setCurrentIndex(max(w.findData(str(v)), 0))
                 elif key == "screen_dpi":
                     i = w.findData(float(v))
                     if i < 0:
@@ -447,6 +482,7 @@ def build_window(path=CONFIG_PATH):
                       or values["typing_move_block_ms"] >= 0)
             self.custom_typing.setChecked(custom)
             self._typing_mode()
+            self._mode_changed()
             if custom:  # one custom value may still be -1: show what applies
                 level = AAP_LEVELS[int(values["aap_threshold"])]
                 for i, key in enumerate(("typing_tap_block_ms", "typing_move_block_ms")):

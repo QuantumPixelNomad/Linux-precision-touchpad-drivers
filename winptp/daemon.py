@@ -25,6 +25,7 @@ log = logging.getLogger("winptpd")
 POINTER_NAME = "winptp pointer"
 PAD_NAME = "winptp touchpad"
 KEYBOARD_NAME = "winptp keys"
+PASSTHROUGH_PHYS = "winptp/passthrough"
 VIRTUAL_VENDOR = 0x1d6b   # Linux Foundation
 VIRTUAL_PRODUCT = 0x5054  # "PT"
 
@@ -73,7 +74,7 @@ def find_touchpad(name_hint=None):
         is_pad = (e.ABS_MT_POSITION_X in abs_codes and
                   e.INPUT_PROP_BUTTONPAD in dev.input_props() or
                   e.ABS_MT_POSITION_X in abs_codes and "touchpad" in dev.name.lower())
-        if dev.name.startswith("winptp"):
+        if dev.name.startswith("winptp") or (dev.phys or "").startswith("winptp"):
             is_pad = False
         if is_pad and (name_hint is None or name_hint.lower() in dev.name.lower()):
             return dev
@@ -153,6 +154,130 @@ class PinchPad:
     def close(self):
         self.end()
         self.dev.close()
+
+
+class Passthrough:
+    """Gestures mode: a virtual copy of the touchpad that libinput drives.
+
+    One- and two-finger input is replayed unchanged, so pointer, taps,
+    scrolling and pinch behave exactly as stock libinput / Plasma settings
+    say. When a third finger lands, the copy sees every finger lift and
+    stays quiet until the real pad is empty again, so libinput never sees
+    a 3/4-finger gesture and winptp's swipes are the only ones.
+
+    The copy keeps the touchpad's name and IDs, so Plasma's saved Touchpad
+    settings and libinput's quirks for it still apply.
+    """
+
+    def __init__(self, pad, write=None):
+        self.dev = None
+        if write is None:
+            caps = pad.capabilities(absinfo=True)
+            caps.pop(e.EV_SYN, None)
+            caps.pop(e.EV_FF, None)
+            info = pad.info
+            self.dev = evdev.UInput(caps, name=pad.name, vendor=info.vendor,
+                                    product=info.product, version=info.version,
+                                    bustype=info.bustype, phys=PASSTHROUGH_PHYS,
+                                    input_props=pad.input_props())
+            write = self.dev.write
+        self.write = write
+        self.blocked = False
+        self.contacts = {}          # slot -> True while forwarded and down
+        self.keys = set()           # BTN_* currently down on the copy
+
+    def frame(self, raw, raw_slot, slots, fingers):
+        """Forward one frame. slots: the reader's slot state after it."""
+        w = self.write
+        if self.blocked:
+            if not slots:
+                self.blocked = False
+            return
+        if fingers >= 3:
+            self.lift()
+            self.blocked = True
+            return
+        w(e.EV_ABS, e.ABS_MT_SLOT, raw_slot)
+        slot, fresh = raw_slot, []
+        for t, c, v in raw:
+            w(t, c, v)
+            if t == e.EV_ABS and c == e.ABS_MT_SLOT:
+                slot = v
+            elif t == e.EV_ABS and c == e.ABS_MT_TRACKING_ID:
+                if v < 0:
+                    self.contacts.pop(slot, None)
+                else:
+                    self.contacts[slot] = True
+                    fresh.append(slot)
+            elif t == e.EV_KEY:
+                (self.keys.add if v else self.keys.discard)(c)
+        # the kernel drops a position equal to the slot's last one, which
+        # the copy may not have seen: restate it for new contacts
+        for s in fresh:
+            st = slots.get(s, {})
+            w(e.EV_ABS, e.ABS_MT_SLOT, s)
+            if "ux" in st:
+                w(e.EV_ABS, e.ABS_MT_POSITION_X, st["ux"])
+            if "uy" in st:
+                w(e.EV_ABS, e.ABS_MT_POSITION_Y, st["uy"])
+        w(e.EV_SYN, e.SYN_REPORT, 0)
+
+    def lift(self):
+        w = self.write
+        for s in list(self.contacts):
+            w(e.EV_ABS, e.ABS_MT_SLOT, s)
+            w(e.EV_ABS, e.ABS_MT_TRACKING_ID, -1)
+        self.contacts.clear()
+        for k in list(self.keys):
+            w(e.EV_KEY, k, 0)
+        self.keys.clear()
+        w(e.EV_SYN, e.SYN_REPORT, 0)
+
+    def close(self):
+        self.lift()
+        if self.dev:
+            self.dev.close()
+
+
+class GestureGate:
+    """Gestures mode: let through only what 3/4-finger sessions produce.
+
+    A session counts from the frame a third finger lands until the pad is
+    empty; the lift frame itself still passes (taps fire on lift). Key
+    releases always pass so Alt can never stick.
+    """
+
+    ALLOWED = ("combo", "keydown", "keyup", "button")
+
+    def __init__(self):
+        self.multi = False
+
+    def frame(self, actions, fingers, touches):
+        was = self.multi
+        if fingers >= 3:
+            self.multi = True
+        elif not touches:
+            self.multi = False
+        return self._filter(actions, was or self.multi)
+
+    def tick(self, actions):
+        return self._filter(actions, self.multi)
+
+    def _filter(self, actions, multi):
+        return [a for a in actions
+                if a[0] == "keyup" or multi and a[0] in self.ALLOWED]
+
+
+def gestures_only(cfg):
+    """Turn off what libinput does itself in gestures mode.
+
+    tap_to_click stays on for the engine: 3/4-finger taps are winptp's, and
+    one/two-finger taps are dropped by the action filter in run().
+    """
+    cfg.tap_to_click = True
+    for k in ("two_finger_tap", "tap_and_drag", "inertia", "pinch_zoom",
+              "pinch_native"):
+        setattr(cfg, k, False)
 
 
 class Output:
@@ -280,10 +405,17 @@ class TouchpadReader:
         self.slot = 0
         self.slots = {}
         self.button = False
+        self.raw = []               # this frame's events, for Passthrough
+        self.raw_slot = 0           # slot selected when the frame began
 
     def events(self):
-        """Yield (touches, button) for every SYN_REPORT."""
+        """Yield (touches, button) for every SYN_REPORT.
+
+        self.raw / self.raw_slot hold the frame's raw events meanwhile.
+        """
         for ev in self.dev.read():
+            if ev.type != e.EV_SYN:
+                self.raw.append((ev.type, ev.code, ev.value))
             if ev.type == e.EV_ABS:
                 s = self.slots.setdefault(self.slot, {})
                 if ev.code == e.ABS_MT_SLOT:
@@ -295,8 +427,10 @@ class TouchpadReader:
                         self.slots[self.slot] = {"id": ev.value}
                 elif ev.code == e.ABS_MT_POSITION_X:
                     s["x"] = (ev.value - self.ax.min) / self.rx
+                    s["ux"] = ev.value
                 elif ev.code == e.ABS_MT_POSITION_Y:
                     s["y"] = (ev.value - self.ay.min) / self.ry
+                    s["uy"] = ev.value
                 elif ev.code == e.ABS_MT_TOOL_TYPE:
                     s["palm"] = ev.value == MT_TOOL_PALM
             elif ev.type == e.EV_KEY and ev.code == e.BTN_LEFT:
@@ -306,8 +440,11 @@ class TouchpadReader:
                            for k, v in self.slots.items()
                            if "id" in v and "x" in v and "y" in v}
                 yield touches, self.button
+                self.raw = []
+                self.raw_slot = self.slot
             elif ev.type == e.EV_SYN and ev.code == e.SYN_DROPPED:
                 self.slots.clear()
+                self.raw = []
 
 
 def now_ms():
@@ -323,8 +460,14 @@ def run(cfg, name_hint=None, dry_run=False):
     cfg.width_mm, cfg.height_mm = reader.width_mm, reader.height_mm
     log.info("touchpad %s (%s) %.0fx%.0f mm", pad.name, pad.path,
              cfg.width_mm, cfg.height_mm)
+    gestures = cfg.mode == "gestures"
+    if gestures:
+        gestures_only(cfg)
+        log.info("gestures mode: 1-2 fingers go to libinput unchanged")
     engine = Engine(cfg)
-    pinchpad = None
+    pinchpad = passthrough = None
+    if gestures and not dry_run:
+        passthrough = Passthrough(pad)
     if not dry_run and cfg.pinch_native:
         try:
             pinchpad = PinchPad(pad, reader)
@@ -337,6 +480,7 @@ def run(cfg, name_hint=None, dry_run=False):
     log.info("watching %d keyboard(s) for disable-while-typing", len(kbds))
     if not dry_run:
         pad.grab()
+    gate = GestureGate() if gestures else None
     try:
         fds = {pad.fd: pad}
         for k in kbds:
@@ -351,7 +495,14 @@ def run(cfg, name_hint=None, dry_run=False):
                 if dev is pad:
                     try:
                         for touches, button in reader.events():
-                            actions += engine.frame(now_ms(), touches, button)
+                            acts = engine.frame(now_ms(), touches, button)
+                            if gate:
+                                n = engine.finger_count()
+                                if passthrough:
+                                    passthrough.frame(reader.raw, reader.raw_slot,
+                                                      reader.slots, n)
+                                acts = gate.frame(acts, n, touches)
+                            actions += acts
                     except OSError:
                         log.warning("touchpad disappeared; exiting for restart")
                         return 1
@@ -363,7 +514,8 @@ def run(cfg, name_hint=None, dry_run=False):
                                 engine.key_activity(now_ms())
                     except OSError:
                         del fds[fd]
-            actions += engine.tick(now_ms())
+            ticked = engine.tick(now_ms())
+            actions += gate.tick(ticked) if gate else ticked
             if actions:
                 if dry_run:
                     for a in actions:
@@ -377,6 +529,8 @@ def run(cfg, name_hint=None, dry_run=False):
             except OSError:
                 pass
             out.close()
+            if passthrough:
+                passthrough.close()
 
 
 def main(argv=None):
