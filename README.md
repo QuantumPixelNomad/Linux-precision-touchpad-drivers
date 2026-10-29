@@ -137,7 +137,9 @@ exactly stock, and the Touchpad page in System Settings works again (it
 uses the settings you saved there before). As soon as a third finger
 lands, winptp takes over until all fingers lift, so the three- and
 four-finger swipes and taps are winptp's and Plasma's own gestures never
-fire twice.
+fire twice. Fingers that libinput already saw are released only after its
+tap timeout, so a three-finger tap whose fingers land a moment apart is
+never read as a two-finger tap.
 
 ## Uninstall
 

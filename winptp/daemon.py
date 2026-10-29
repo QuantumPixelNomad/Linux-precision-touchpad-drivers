@@ -26,6 +26,7 @@ POINTER_NAME = "winptp pointer"
 PAD_NAME = "winptp touchpad"
 KEYBOARD_NAME = "winptp keys"
 PASSTHROUGH_PHYS = "winptp/passthrough"
+LIFT_AFTER_MS = 300.0   # past libinput's 180 ms tap timeout
 VIRTUAL_VENDOR = 0x1d6b   # Linux Foundation
 VIRTUAL_PRODUCT = 0x5054  # "PT"
 
@@ -185,20 +186,32 @@ class Passthrough:
         self.blocked = False
         self.contacts = {}          # slot -> True while forwarded and down
         self.keys = set()           # BTN_* currently down on the copy
+        self.down_since = None      # when the copy's current touch began
+        self.lift_at = None         # deferred lift, see frame()
+        self.live = False
 
-    def frame(self, raw, raw_slot, slots, fingers):
+    def frame(self, raw, raw_slot, slots, fingers, t=0.0):
         """Forward one frame. slots: the reader's slot state after it."""
         w = self.write
+        # the reader keeps empty entries for unused slots: only a slot
+        # with a tracking id is a finger
+        self.live = any("id" in st for st in slots.values())
         if self.blocked:
-            # the reader keeps empty entries for unused slots: only a slot
-            # with a tracking id is a finger
-            if not any("id" in st for st in slots.values()):
+            if not self.live and self.lift_at is None:
                 self.blocked = False
             return
         if fingers >= 3:
-            self.lift()
+            # The fingers of a three-finger tap land a few ms apart, so the
+            # copy may already hold the first one or two. Lifting them now
+            # would be a quick tap to libinput (a right click). Instead they
+            # stay down, frozen, until libinput's tap timeout has passed.
+            if self.contacts or self.keys:
+                since = t if self.down_since is None else self.down_since
+                self.lift_at = max(t, since + LIFT_AFTER_MS)
             self.blocked = True
             return
+        if not self.contacts and not self.keys:
+            self.down_since = t
         w(e.EV_ABS, e.ABS_MT_SLOT, raw_slot)
         slot, fresh = raw_slot, []
         for t, c, v in raw:
@@ -223,6 +236,17 @@ class Passthrough:
             if "uy" in st:
                 w(e.EV_ABS, e.ABS_MT_POSITION_Y, st["uy"])
         w(e.EV_SYN, e.SYN_REPORT, 0)
+
+    def next_timeout(self, t):
+        """Milliseconds until tick() must run, or None."""
+        return None if self.lift_at is None else max(0.0, self.lift_at - t)
+
+    def tick(self, t):
+        if self.lift_at is not None and t >= self.lift_at:
+            self.lift()
+            self.lift_at = None
+            if not self.live:
+                self.blocked = False
 
     def lift(self):
         w = self.write
@@ -488,7 +512,12 @@ def run(cfg, name_hint=None, dry_run=False):
         for k in kbds:
             fds[k.fd] = k
         while True:
-            timeout = engine.next_timeout(now_ms())
+            now = now_ms()
+            timeouts = [engine.next_timeout(now)]
+            if passthrough:
+                timeouts.append(passthrough.next_timeout(now))
+            timeouts = [x for x in timeouts if x is not None]
+            timeout = min(timeouts) if timeouts else None
             r, _, _ = select.select(list(fds), [], [],
                                     None if timeout is None else timeout / 1000.0)
             actions = []
@@ -502,7 +531,7 @@ def run(cfg, name_hint=None, dry_run=False):
                                 n = engine.finger_count()
                                 if passthrough:
                                     passthrough.frame(reader.raw, reader.raw_slot,
-                                                      reader.slots, n)
+                                                      reader.slots, n, now_ms())
                                 acts = gate.frame(acts, n, touches)
                             actions += acts
                     except OSError:
@@ -516,6 +545,8 @@ def run(cfg, name_hint=None, dry_run=False):
                                 engine.key_activity(now_ms())
                     except OSError:
                         del fds[fd]
+            if passthrough:
+                passthrough.tick(now_ms())
             ticked = engine.tick(now_ms())
             actions += gate.tick(ticked) if gate else ticked
             if actions:

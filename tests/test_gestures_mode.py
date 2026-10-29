@@ -33,24 +33,30 @@ class PassthroughTest(unittest.TestCase):
         self.assertEqual(self.out[1:6], raw)
         self.assertEqual(self.out[-1], (e.EV_SYN, e.SYN_REPORT, 0))
 
-    def test_third_finger_lifts_and_blocks_until_empty(self):
-        self.p.frame(self.down(0, 5, 100, 200), 0, {0: {}}, 1)
+    def test_third_finger_freezes_then_lifts_after_tap_timeout(self):
+        live = {"id": 1}
+        self.p.frame(self.down(0, 5, 100, 200), 0, {0: live}, 1, t=0)
         self.out.clear()
-        self.p.frame(self.down(2, 7, 300, 200), 0, {0: {}, 1: {}, 2: {}}, 3)
+        self.p.frame(self.down(2, 7, 300, 200), 0, {0: live, 1: live, 2: live}, 3, t=30)
+        self.assertEqual(self.out, [])          # frozen: no lift yet, so no tap
+        self.assertEqual(self.p.next_timeout(30), 270)
+        self.p.frame([(e.EV_ABS, e.ABS_MT_POSITION_X, 310)], 2, {0: live, 2: live}, 2, t=60)
+        self.p.frame([], 2, {0: {}}, 0, t=120)  # all lifted: a quick 3-finger tap
+        self.p.frame(self.down(0, 9, 50, 60), 2, {0: {"id": 9}}, 1, t=200)
+        self.assertEqual(self.out, [])          # still waiting for the lift
+        self.p.tick(300)
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, -1), self.out)
         self.assertIn((e.EV_KEY, e.BTN_TOUCH, 0), self.out)
         self.assertNotIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 7), self.out)
         self.out.clear()
-        self.p.frame([(e.EV_ABS, e.ABS_MT_POSITION_X, 310)], 2, {0: {}, 2: {}}, 2)
-        self.assertEqual(self.out, [])          # still blocked: fingers on pad
-        self.p.frame([], 2, {}, 0)              # all lifted
+        self.p.frame([], 0, {0: {}}, 0, t=320)  # the touch at 200 ms lifts
         self.p.frame(self.down(0, 9, 50, 60), 2, {0: {"ux": 50, "uy": 60}}, 1)
         self.assertEqual(self.out[0], (e.EV_ABS, e.ABS_MT_SLOT, 2))  # slot restated
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 9), self.out)
 
     def test_unblocks_with_stale_empty_slots(self):
         # the reader leaves {} entries behind for slots that were lifted
-        self.p.frame([], 0, {}, 3)
+        self.p.frame([], 0, {0: {"id": 1}}, 3)
         self.p.frame([], 0, {0: {}, 1: {}, 2: {}}, 0)
         self.out.clear()
         self.p.frame(self.down(0, 9, 50, 60), 0, {0: {"id": 9, "ux": 50, "uy": 60}}, 1)
@@ -134,6 +140,8 @@ class ReaderPassthroughTest(unittest.TestCase):
         self.engine = Engine(cfg)
         self.out = []
         self.p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev))
+        self.gate = daemon.GestureGate()
+        self.actions = []
         self.t = 0.0
 
     def push(self, *events):
@@ -141,9 +149,12 @@ class ReaderPassthroughTest(unittest.TestCase):
         self.dev.queue = [E(*ev) for ev in events] + [E(e.EV_SYN, e.SYN_REPORT, 0)]
         for touches, button in self.reader.events():
             self.t += 8
-            self.engine.frame(self.t, touches, button)
+            acts = self.engine.frame(self.t, touches, button)
+            n = self.engine.finger_count()
             self.p.frame(self.reader.raw, self.reader.raw_slot, self.reader.slots,
-                         self.engine.finger_count())
+                         n, self.t)
+            self.actions += self.gate.frame(acts, n, touches)
+        self.p.tick(self.t)
 
     def fingers(self, n, tid0, x):
         evs = []
@@ -165,9 +176,29 @@ class ReaderPassthroughTest(unittest.TestCase):
             self.push((e.EV_ABS, e.ABS_MT_SLOT, 0),
                       (e.EV_ABS, e.ABS_MT_POSITION_Y, 380 - 20 * k))
         self.push(*self.lift(3))
+        self.t += 400
+        self.p.tick(self.t)
         self.assertTrue(self.p.blocked is False)
         self.out.clear()
         self.push(*self.fingers(1, 20, 500))
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 20), self.out)
         self.push((e.EV_ABS, e.ABS_MT_POSITION_X, 520))
         self.assertIn((e.EV_ABS, e.ABS_MT_POSITION_X, 520), self.out)
+
+    def test_staggered_three_finger_tap_is_not_a_tap_to_libinput(self):
+        E = e
+        for i, x in enumerate((100, 300, 500)):     # fingers land 8 ms apart
+            self.push((E.EV_ABS, E.ABS_MT_SLOT, i), (E.EV_ABS, E.ABS_MT_TRACKING_ID, 30 + i),
+                      (E.EV_ABS, E.ABS_MT_POSITION_X, x), (E.EV_ABS, E.ABS_MT_POSITION_Y, 400))
+        self.push(*self.lift(3))
+        lifts = [i for i, ev in enumerate(self.out) if ev[1] == E.ABS_MT_TRACKING_ID]
+        self.assertEqual(len(lifts), 2)             # the copy saw two fingers go down...
+        self.t += 400
+        self.p.tick(self.t)
+        self.assertGreaterEqual(self.t - 8, 180)    # ...and lift only after the tap timeout
+        self.assertIn((E.EV_ABS, E.ABS_MT_TRACKING_ID, -1), self.out)
+        self.assertEqual(self.actions, [("button", "middle", True),
+                                        ("button", "middle", False)])
+        self.out.clear()
+        self.push(*self.fingers(1, 50, 600))        # pointer works right after
+        self.assertIn((E.EV_ABS, E.ABS_MT_TRACKING_ID, 50), self.out)
