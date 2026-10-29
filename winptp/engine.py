@@ -63,6 +63,7 @@ class Config:
     # "windows": winptp does everything. "gestures": winptp only does the
     # 3/4-finger swipes and taps; 1-2 finger input goes to libinput as is.
     mode: str = "windows"
+    gesture_hold_ms: float = 80.0      # gestures mode: wait this long for more fingers
     width_mm: float = 102.0
     height_mm: float = 67.0
     # pointer

@@ -36,12 +36,13 @@ class PassthroughTest(unittest.TestCase):
     def test_third_finger_lifts_and_blocks_until_empty(self):
         self.p.frame(self.down(0, 5, 100, 200), 0, {0: {}}, 1)
         self.out.clear()
-        self.p.frame(self.down(2, 7, 300, 200), 0, {0: {}, 1: {}, 2: {}}, 3)
+        live = {"id": 1}
+        self.p.frame(self.down(2, 7, 300, 200), 0, {0: live, 1: live, 2: live}, 3)
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, -1), self.out)
         self.assertIn((e.EV_KEY, e.BTN_TOUCH, 0), self.out)
         self.assertNotIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 7), self.out)
         self.out.clear()
-        self.p.frame([(e.EV_ABS, e.ABS_MT_POSITION_X, 310)], 2, {0: {}, 2: {}}, 2)
+        self.p.frame([(e.EV_ABS, e.ABS_MT_POSITION_X, 310)], 2, {0: live, 2: live}, 2)
         self.assertEqual(self.out, [])          # still blocked: fingers on pad
         self.p.frame([], 2, {}, 0)              # all lifted
         self.p.frame(self.down(0, 9, 50, 60), 2, {0: {"ux": 50, "uy": 60}}, 1)
@@ -50,11 +51,46 @@ class PassthroughTest(unittest.TestCase):
 
     def test_unblocks_with_stale_empty_slots(self):
         # the reader leaves {} entries behind for slots that were lifted
-        self.p.frame([], 0, {}, 3)
+        self.p.frame([], 0, {0: {"id": 1}}, 3)
         self.p.frame([], 0, {0: {}, 1: {}, 2: {}}, 0)
         self.out.clear()
         self.p.frame(self.down(0, 9, 50, 60), 0, {0: {"id": 9, "ux": 50, "uy": 60}}, 1)
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 9), self.out)
+
+    def test_staggered_three_finger_tap_never_reaches_libinput(self):
+        p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev), hold_ms=80)
+        one, two = {0: {"id": 1}}, {0: {"id": 1}, 1: {"id": 2}}
+        three = {**two, 2: {"id": 3}}
+        p.frame(self.down(0, 1, 100, 200), 0, one, 1, t=0)
+        p.frame(self.down(1, 2, 300, 200), 0, two, 2, t=25)
+        p.frame(self.down(2, 3, 500, 200), 1, three, 3, t=50)
+        p.frame([], 2, {}, 0, t=120)
+        p.tick(200)
+        self.assertEqual(self.out, [])
+
+    def test_quick_tap_is_replayed_down_then_up(self):
+        p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev), hold_ms=80)
+        p.frame(self.down(0, 1, 100, 200), 0, {0: {"id": 1, "ux": 100, "uy": 200}}, 1, t=0)
+        self.assertEqual(self.out, [])
+        p.frame([(e.EV_ABS, e.ABS_MT_TRACKING_ID, -1), (e.EV_KEY, e.BTN_TOUCH, 0)],
+                0, {0: {}}, 0, t=60)
+        syns = [i for i, ev in enumerate(self.out) if ev == (e.EV_SYN, e.SYN_REPORT, 0)]
+        self.assertEqual(len(syns), 2)          # touch-down frame, then lift frame
+        self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 1), self.out[:syns[0]])
+        self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, -1), self.out[syns[0]:])
+
+    def test_held_touch_starts_after_hold(self):
+        p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev), hold_ms=80)
+        p.frame(self.down(0, 1, 100, 200), 0, {0: {"id": 1}}, 1, t=0)
+        p.frame([(e.EV_ABS, e.ABS_MT_POSITION_X, 110)], 0, {0: {"id": 1}}, 1, t=40)
+        self.assertEqual(self.out, [])
+        self.assertEqual(p.next_timeout(40), 40)
+        p.tick(80)                              # finger resting still: timer flushes
+        self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 1), self.out)
+        self.assertIn((e.EV_ABS, e.ABS_MT_POSITION_X, 110), self.out)
+        self.out.clear()
+        p.frame([(e.EV_ABS, e.ABS_MT_POSITION_X, 120)], 0, {0: {"id": 1}}, 1, t=90)
+        self.assertIn((e.EV_ABS, e.ABS_MT_POSITION_X, 120), self.out)   # live now
 
     def test_new_contact_position_restated(self):
         raw = [(e.EV_ABS, e.ABS_MT_TRACKING_ID, 3)]   # kernel dropped equal X/Y
@@ -133,7 +169,10 @@ class ReaderPassthroughTest(unittest.TestCase):
         daemon.gestures_only(cfg)
         self.engine = Engine(cfg)
         self.out = []
-        self.p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev))
+        self.p = daemon.Passthrough(None, write=lambda *ev: self.out.append(ev),
+                                    hold_ms=80)
+        self.gate = daemon.GestureGate()
+        self.actions = []
         self.t = 0.0
 
     def push(self, *events):
@@ -141,9 +180,12 @@ class ReaderPassthroughTest(unittest.TestCase):
         self.dev.queue = [E(*ev) for ev in events] + [E(e.EV_SYN, e.SYN_REPORT, 0)]
         for touches, button in self.reader.events():
             self.t += 8
-            self.engine.frame(self.t, touches, button)
+            acts = self.engine.frame(self.t, touches, button)
+            n = self.engine.finger_count()
             self.p.frame(self.reader.raw, self.reader.raw_slot, self.reader.slots,
-                         self.engine.finger_count())
+                         n, self.t)
+            self.actions += self.gate.frame(acts, n, touches)
+        self.p.tick(self.t)
 
     def fingers(self, n, tid0, x):
         evs = []
@@ -168,6 +210,20 @@ class ReaderPassthroughTest(unittest.TestCase):
         self.assertTrue(self.p.blocked is False)
         self.out.clear()
         self.push(*self.fingers(1, 20, 500))
+        self.t += 100
+        self.p.tick(self.t)                     # hold over
         self.assertIn((e.EV_ABS, e.ABS_MT_TRACKING_ID, 20), self.out)
         self.push((e.EV_ABS, e.ABS_MT_POSITION_X, 520))
         self.assertIn((e.EV_ABS, e.ABS_MT_POSITION_X, 520), self.out)
+
+    def test_staggered_three_finger_tap_is_a_middle_click_only(self):
+        E = e
+        for i, x in enumerate((100, 300, 500)):     # fingers land 16 ms apart
+            self.push((E.EV_ABS, E.ABS_MT_SLOT, i), (E.EV_ABS, E.ABS_MT_TRACKING_ID, 30 + i),
+                      (E.EV_ABS, E.ABS_MT_POSITION_X, x), (E.EV_ABS, E.ABS_MT_POSITION_Y, 400))
+        self.push(*self.lift(3))
+        self.t += 300
+        self.p.tick(self.t)
+        self.assertEqual(self.out, [])              # libinput saw nothing: no right click
+        self.assertEqual(self.actions, [("button", "middle", True),
+                                        ("button", "middle", False)])

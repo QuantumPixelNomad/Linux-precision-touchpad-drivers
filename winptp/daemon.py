@@ -169,7 +169,7 @@ class Passthrough:
     settings and libinput's quirks for it still apply.
     """
 
-    def __init__(self, pad, write=None):
+    def __init__(self, pad, write=None, hold_ms=0.0):
         self.dev = None
         if write is None:
             caps = pad.capabilities(absinfo=True)
@@ -182,23 +182,68 @@ class Passthrough:
                                     input_props=pad.input_props())
             write = self.dev.write
         self.write = write
+        self.hold_ms = hold_ms
         self.blocked = False
         self.contacts = {}          # slot -> True while forwarded and down
         self.keys = set()           # BTN_* currently down on the copy
+        # Fingers of a three-finger tap land a few ms apart. Had libinput
+        # seen the first two, lifting them when the third lands would be a
+        # two-finger tap (right click). So a touch on an idle pad is held
+        # back for hold_ms, until it is clear how many fingers it is.
+        self.pending = None         # [raw_slot, events] while holding
+        self.hold_until = 0.0
+        self.slots = {}
 
-    def frame(self, raw, raw_slot, slots, fingers):
+    def frame(self, raw, raw_slot, slots, fingers, t=0.0):
         """Forward one frame. slots: the reader's slot state after it."""
-        w = self.write
+        self.slots = slots
+        # the reader keeps empty entries for unused slots: only a slot
+        # with a tracking id is a finger
+        live = any("id" in st for st in slots.values())
         if self.blocked:
-            # the reader keeps empty entries for unused slots: only a slot
-            # with a tracking id is a finger
-            if not any("id" in st for st in slots.values()):
+            if not live:
                 self.blocked = False
             return
         if fingers >= 3:
-            self.lift()
-            self.blocked = True
+            self.pending = None     # libinput never saw these fingers
+            if self.contacts or self.keys:
+                self.lift()
+            self.blocked = live
             return
+        if self.pending is not None:
+            if not live:            # a quick one/two-finger tap: replay it
+                self.flush()
+                self._forward(raw_slot, raw)
+            else:
+                self.pending[1] += raw
+                if t >= self.hold_until:
+                    self.flush()
+            return
+        if live and not self.contacts and not self.keys and self.hold_ms > 0:
+            self.pending = [raw_slot, list(raw)]
+            self.hold_until = t + self.hold_ms
+            return
+        self._forward(raw_slot, raw)
+
+    def next_timeout(self, t):
+        """Milliseconds until tick() must run, or None."""
+        if self.pending is None:
+            return None
+        return max(0.0, self.hold_until - t)
+
+    def tick(self, t):
+        if self.pending is not None and t >= self.hold_until:
+            self.flush()
+
+    def flush(self):
+        """Send the held frames as one frame: libinput sees the touch start."""
+        if self.pending is not None:
+            raw_slot, raw = self.pending
+            self.pending = None
+            self._forward(raw_slot, raw)
+
+    def _forward(self, raw_slot, raw):
+        w = self.write
         w(e.EV_ABS, e.ABS_MT_SLOT, raw_slot)
         slot, fresh = raw_slot, []
         for t, c, v in raw:
@@ -208,6 +253,8 @@ class Passthrough:
             elif t == e.EV_ABS and c == e.ABS_MT_TRACKING_ID:
                 if v < 0:
                     self.contacts.pop(slot, None)
+                    if slot in fresh:
+                        fresh.remove(slot)
                 else:
                     self.contacts[slot] = True
                     fresh.append(slot)
@@ -216,7 +263,7 @@ class Passthrough:
         # the kernel drops a position equal to the slot's last one, which
         # the copy may not have seen: restate it for new contacts
         for s in fresh:
-            st = slots.get(s, {})
+            st = self.slots.get(s, {})
             w(e.EV_ABS, e.ABS_MT_SLOT, s)
             if "ux" in st:
                 w(e.EV_ABS, e.ABS_MT_POSITION_X, st["ux"])
@@ -469,7 +516,7 @@ def run(cfg, name_hint=None, dry_run=False):
     engine = Engine(cfg)
     pinchpad = passthrough = None
     if gestures and not dry_run:
-        passthrough = Passthrough(pad)
+        passthrough = Passthrough(pad, hold_ms=cfg.gesture_hold_ms)
     if not dry_run and cfg.pinch_native:
         try:
             pinchpad = PinchPad(pad, reader)
@@ -488,7 +535,12 @@ def run(cfg, name_hint=None, dry_run=False):
         for k in kbds:
             fds[k.fd] = k
         while True:
-            timeout = engine.next_timeout(now_ms())
+            t = now_ms()
+            timeouts = [engine.next_timeout(t)]
+            if passthrough:
+                timeouts.append(passthrough.next_timeout(t))
+            timeouts = [x for x in timeouts if x is not None]
+            timeout = min(timeouts) if timeouts else None
             r, _, _ = select.select(list(fds), [], [],
                                     None if timeout is None else timeout / 1000.0)
             actions = []
@@ -502,7 +554,7 @@ def run(cfg, name_hint=None, dry_run=False):
                                 n = engine.finger_count()
                                 if passthrough:
                                     passthrough.frame(reader.raw, reader.raw_slot,
-                                                      reader.slots, n)
+                                                      reader.slots, n, now_ms())
                                 acts = gate.frame(acts, n, touches)
                             actions += acts
                     except OSError:
@@ -516,6 +568,8 @@ def run(cfg, name_hint=None, dry_run=False):
                                 engine.key_activity(now_ms())
                     except OSError:
                         del fds[fd]
+            if passthrough:
+                passthrough.tick(now_ms())
             ticked = engine.tick(now_ms())
             actions += gate.tick(ticked) if gate else ticked
             if actions:
