@@ -90,12 +90,29 @@ class TestTaps(unittest.TestCase):
         p.lift()
         p.frame({}, dt=60)
         p.stroke([(50, 30)], (20, 0), 20)
-        self.assertEqual(p.kinds("button"), [("button", "left", True),
-                                             ("button", "left", False),
-                                             ("button", "left", True)])
+        # the tap starts the drag: no click first, so no double click
+        # (which would maximize a window grabbed by its title bar)
+        self.assertEqual(p.kinds("button"), [("button", "left", True)])
         self.assertTrue(p.kinds("move"))
         p.lift()
-        self.assertEqual(p.kinds("button")[-1], ("button", "left", False))
+        p.wait(300)
+        self.assertEqual(p.kinds("button"), [("button", "left", True),
+                                             ("button", "left", False)])
+
+    def test_tap_click_waits_for_drag_window(self):
+        p = Pad()
+        p.stroke([(50, 30)], (0, 0), 5)
+        p.lift()
+        self.assertEqual(p.kinds("button"), [])
+        p.wait(300)
+        self.assertEqual(p.kinds("button"), [("button", "left", True),
+                                             ("button", "left", False)])
+
+    def test_tap_click_is_immediate_without_tap_and_drag(self):
+        p = Pad(tap_and_drag=False)
+        p.stroke([(50, 30)], (0, 0), 5)
+        p.lift()
+        self.assertEqual(len(p.kinds("button")), 2)
 
     def test_typing_suppresses_tap(self):
         p = Pad()
@@ -137,7 +154,28 @@ class TestTapExtras(unittest.TestCase):
             p.stroke([(50, 30)], (0, 0), 5)
             p.lift()
             p.frame({}, dt=60)
+        # both clicks as soon as the second tap lifts: a real double click
         self.assertEqual(len(p.kinds("button")), 4)
+
+    def test_tap_then_physical_click_keeps_order(self):
+        p = Pad()
+        p.stroke([(50, 30)], (0, 0), 5)
+        p.lift()
+        p.frame({}, dt=60)
+        p.stroke([(50, 30)], (0, 0), 5, button=True)
+        p.lift()
+        self.assertEqual(p.kinds("button")[:2], [("button", "left", True),
+                                                 ("button", "left", False)])
+        self.assertEqual(len(p.kinds("button")), 4)
+
+    def test_tap_then_touch_elsewhere_clicks_first(self):
+        p = Pad()
+        p.stroke([(50, 30)], (0, 0), 5)
+        p.lift()
+        p.frame({}, dt=60)
+        p.stroke([(90, 60)], (2, 0), 10)        # far away: just pointing
+        self.assertEqual(p.kinds("button"), [("button", "left", True),
+                                             ("button", "left", False)])
 
     def test_tap_does_not_move_pointer(self):
         p = Pad()
