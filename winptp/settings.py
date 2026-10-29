@@ -51,8 +51,7 @@ MODES = [("windows", "Windows precision touchpad (winptp does everything)"),
 # Settings that still matter in gestures mode; the rest is libinput's job.
 GESTURE_KEYS = {"mode", "tap_three", "tap_four", "aap_threshold",
                 "typing_tap_block_ms", "typing_move_block_ms",
-                "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm",
-                "gesture_hold_ms"}
+                "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm"}
 
 # Fine-tuning tab: (group, [(key, label, unit, min, max, step, tooltip)])
 FINE_TUNING = [
@@ -61,10 +60,6 @@ FINE_TUNING = [
          "How far the fingers must travel before a swipe fires"),
         ("gesture4_vertical_mm", "Four fingers up/down start after", "mm", 1, 30, 0.5,
          "Four-finger up/down usually needs less travel than sideways"),
-        ("gesture_hold_ms", "Gestures mode: wait for more fingers", "ms", 0, 250, 10,
-         "In gestures mode, a new touch waits this long before Plasma sees it, "
-         "so a three-finger tap whose fingers land a moment apart is not "
-         "taken as a two-finger tap. Raise it if that still happens"),
         ("alt_tab_step_mm", "App switcher: travel per window", "mm", 2, 50, 0.5,
          "With three fingers held down sideways, how far to move to step "
          "to the next window. Smaller = faster"),

@@ -26,6 +26,7 @@ POINTER_NAME = "winptp pointer"
 PAD_NAME = "winptp touchpad"
 KEYBOARD_NAME = "winptp keys"
 PASSTHROUGH_PHYS = "winptp/passthrough"
+LIFT_AFTER_MS = 300.0   # past libinput's 180 ms tap timeout
 VIRTUAL_VENDOR = 0x1d6b   # Linux Foundation
 VIRTUAL_PRODUCT = 0x5054  # "PT"
 
@@ -169,7 +170,7 @@ class Passthrough:
     settings and libinput's quirks for it still apply.
     """
 
-    def __init__(self, pad, write=None, hold_ms=0.0):
+    def __init__(self, pad, write=None):
         self.dev = None
         if write is None:
             caps = pad.capabilities(absinfo=True)
@@ -182,95 +183,35 @@ class Passthrough:
                                     input_props=pad.input_props())
             write = self.dev.write
         self.write = write
-        self.hold_ms = hold_ms
         self.blocked = False
         self.contacts = {}          # slot -> True while forwarded and down
         self.keys = set()           # BTN_* currently down on the copy
-        # Fingers of a three-finger tap land a few ms apart. Had libinput
-        # seen the first two, lifting them when the third lands would be a
-        # two-finger tap (right click). So a touch on an idle pad is held
-        # back for hold_ms, until it is clear how many fingers it is.
-        self.pending = None         # [raw_slot, events] while holding
-        self.hold_until = 0.0
-        self.slots = {}
+        self.down_since = None      # when the copy's current touch began
+        self.lift_at = None         # deferred lift, see frame()
+        self.live = False
 
     def frame(self, raw, raw_slot, slots, fingers, t=0.0):
         """Forward one frame. slots: the reader's slot state after it."""
-        self.slots = slots
+        w = self.write
         # the reader keeps empty entries for unused slots: only a slot
         # with a tracking id is a finger
-        live = any("id" in st for st in slots.values())
+        self.live = any("id" in st for st in slots.values())
         if self.blocked:
-            if not live:
+            if not self.live and self.lift_at is None:
                 self.blocked = False
             return
         if fingers >= 3:
-            self.pending = None     # libinput never saw these fingers
+            # The fingers of a three-finger tap land a few ms apart, so the
+            # copy may already hold the first one or two. Lifting them now
+            # would be a quick tap to libinput (a right click). Instead they
+            # stay down, frozen, until libinput's tap timeout has passed.
             if self.contacts or self.keys:
-                self.lift()
-            self.blocked = live
+                since = t if self.down_since is None else self.down_since
+                self.lift_at = max(t, since + LIFT_AFTER_MS)
+            self.blocked = True
             return
-        if self.pending is not None:
-            if not live:            # a quick one/two-finger tap: replay it
-                self.flush()
-                self._forward(raw_slot, raw)
-            else:
-                self.pending[1] += raw
-                if t >= self.hold_until:
-                    self.flush()
-            return
-        if live and not self.contacts and not self.keys and self.hold_ms > 0:
-            self.pending = [raw_slot, list(raw)]
-            self.hold_until = t + self.hold_ms
-            return
-        self._forward(raw_slot, raw)
-
-    def next_timeout(self, t):
-        """Milliseconds until tick() must run, or None."""
-        if self.pending is None:
-            return None
-        return max(0.0, self.hold_until - t)
-
-    def tick(self, t):
-        if self.pending is not None and t >= self.hold_until:
-            self.flush()
-
-    def flush(self):
-        """Send the held frames' end state as one clean touch-down frame.
-
-        Only the final value of each axis and key goes out, with a single
-        timestamp, so libinput sees a plain new touch rather than a burst
-        of stale motion.
-        """
-        if self.pending is None:
-            return
-        raw_slot, raw = self.pending
-        self.pending = None
-        mt, other, keys, slot = {}, {}, {}, raw_slot
-        for t, c, v in raw:
-            if t == e.EV_ABS and c == e.ABS_MT_SLOT:
-                slot = v
-            elif t == e.EV_ABS and c == e.ABS_MT_TRACKING_ID and v < 0:
-                mt.pop(slot, None)
-            elif t == e.EV_ABS and e.ABS_MT_SLOT < c <= e.ABS_MT_TOOL_Y:
-                mt.setdefault(slot, {})[c] = v
-            elif t == e.EV_KEY:
-                keys[c] = v
-            else:
-                other[(t, c)] = v       # ABS_X/Y, pressure, MSC_TIMESTAMP...
-        state = []
-        for s, axes in sorted(mt.items()):
-            if e.ABS_MT_TRACKING_ID not in axes:
-                continue                # moved, but began before the hold
-            state.append((e.EV_ABS, e.ABS_MT_SLOT, s))
-            state.append((e.EV_ABS, e.ABS_MT_TRACKING_ID, axes.pop(e.ABS_MT_TRACKING_ID)))
-            state += [(e.EV_ABS, c, v) for c, v in sorted(axes.items())]
-        state += [(t, c, v) for (t, c), v in other.items()]
-        state += [(e.EV_KEY, c, v) for c, v in keys.items()]
-        self._forward(raw_slot, state)
-
-    def _forward(self, raw_slot, raw):
-        w = self.write
+        if not self.contacts and not self.keys:
+            self.down_since = t
         w(e.EV_ABS, e.ABS_MT_SLOT, raw_slot)
         slot, fresh = raw_slot, []
         for t, c, v in raw:
@@ -280,8 +221,6 @@ class Passthrough:
             elif t == e.EV_ABS and c == e.ABS_MT_TRACKING_ID:
                 if v < 0:
                     self.contacts.pop(slot, None)
-                    if slot in fresh:
-                        fresh.remove(slot)
                 else:
                     self.contacts[slot] = True
                     fresh.append(slot)
@@ -290,13 +229,24 @@ class Passthrough:
         # the kernel drops a position equal to the slot's last one, which
         # the copy may not have seen: restate it for new contacts
         for s in fresh:
-            st = self.slots.get(s, {})
+            st = slots.get(s, {})
             w(e.EV_ABS, e.ABS_MT_SLOT, s)
             if "ux" in st:
                 w(e.EV_ABS, e.ABS_MT_POSITION_X, st["ux"])
             if "uy" in st:
                 w(e.EV_ABS, e.ABS_MT_POSITION_Y, st["uy"])
         w(e.EV_SYN, e.SYN_REPORT, 0)
+
+    def next_timeout(self, t):
+        """Milliseconds until tick() must run, or None."""
+        return None if self.lift_at is None else max(0.0, self.lift_at - t)
+
+    def tick(self, t):
+        if self.lift_at is not None and t >= self.lift_at:
+            self.lift()
+            self.lift_at = None
+            if not self.live:
+                self.blocked = False
 
     def lift(self):
         w = self.write
@@ -543,7 +493,7 @@ def run(cfg, name_hint=None, dry_run=False):
     engine = Engine(cfg)
     pinchpad = passthrough = None
     if gestures and not dry_run:
-        passthrough = Passthrough(pad, hold_ms=cfg.gesture_hold_ms)
+        passthrough = Passthrough(pad)
     if not dry_run and cfg.pinch_native:
         try:
             pinchpad = PinchPad(pad, reader)
@@ -562,10 +512,10 @@ def run(cfg, name_hint=None, dry_run=False):
         for k in kbds:
             fds[k.fd] = k
         while True:
-            t = now_ms()
-            timeouts = [engine.next_timeout(t)]
+            now = now_ms()
+            timeouts = [engine.next_timeout(now)]
             if passthrough:
-                timeouts.append(passthrough.next_timeout(t))
+                timeouts.append(passthrough.next_timeout(now))
             timeouts = [x for x in timeouts if x is not None]
             timeout = min(timeouts) if timeouts else None
             r, _, _ = select.select(list(fds), [], [],
