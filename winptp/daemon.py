@@ -236,11 +236,38 @@ class Passthrough:
             self.flush()
 
     def flush(self):
-        """Send the held frames as one frame: libinput sees the touch start."""
-        if self.pending is not None:
-            raw_slot, raw = self.pending
-            self.pending = None
-            self._forward(raw_slot, raw)
+        """Send the held frames' end state as one clean touch-down frame.
+
+        Only the final value of each axis and key goes out, with a single
+        timestamp, so libinput sees a plain new touch rather than a burst
+        of stale motion.
+        """
+        if self.pending is None:
+            return
+        raw_slot, raw = self.pending
+        self.pending = None
+        mt, other, keys, slot = {}, {}, {}, raw_slot
+        for t, c, v in raw:
+            if t == e.EV_ABS and c == e.ABS_MT_SLOT:
+                slot = v
+            elif t == e.EV_ABS and c == e.ABS_MT_TRACKING_ID and v < 0:
+                mt.pop(slot, None)
+            elif t == e.EV_ABS and e.ABS_MT_SLOT < c <= e.ABS_MT_TOOL_Y:
+                mt.setdefault(slot, {})[c] = v
+            elif t == e.EV_KEY:
+                keys[c] = v
+            else:
+                other[(t, c)] = v       # ABS_X/Y, pressure, MSC_TIMESTAMP...
+        state = []
+        for s, axes in sorted(mt.items()):
+            if e.ABS_MT_TRACKING_ID not in axes:
+                continue                # moved, but began before the hold
+            state.append((e.EV_ABS, e.ABS_MT_SLOT, s))
+            state.append((e.EV_ABS, e.ABS_MT_TRACKING_ID, axes.pop(e.ABS_MT_TRACKING_ID)))
+            state += [(e.EV_ABS, c, v) for c, v in sorted(axes.items())]
+        state += [(t, c, v) for (t, c), v in other.items()]
+        state += [(e.EV_KEY, c, v) for c, v in keys.items()]
+        self._forward(raw_slot, state)
 
     def _forward(self, raw_slot, raw):
         w = self.write
