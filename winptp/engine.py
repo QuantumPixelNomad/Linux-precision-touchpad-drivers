@@ -178,6 +178,10 @@ class Engine:
         self.drag_until = None
         self.drag_candidate = False
         self.dragging = False
+        # With tap-and-drag on, a one-finger tap's click waits for the drag
+        # window (as on Windows), so tap + touch-and-move is a plain drag
+        # and not a double click (which maximizes a window by its title bar)
+        self.tap_pending = False
         self.prev = {}
         self.prev_count = 0
         self.history = []
@@ -232,6 +236,7 @@ class Engine:
         if self.drag_until is not None and t >= self.drag_until and \
                 not self.drag_candidate:
             self.drag_until = None
+            self._flush_tap()
         if self.inertia_v is not None:
             dt = max(1.0, t - self.inertia_t)
             self.inertia_t = t
@@ -310,6 +315,8 @@ class Engine:
             if f and math.hypot(f.x - self.tap_pos[0], f.y - self.tap_pos[1]) \
                     <= cfg.tap_drag_max_mm:
                 self.drag_candidate = True
+        if not self.drag_candidate:
+            self._flush_tap()       # a touch elsewhere: the tap was just a tap
 
     def _end_session(self, t):
         cfg = self.cfg
@@ -326,15 +333,30 @@ class Engine:
         is_tap = (cfg.tap_to_click and not s.clicked and not s.tap_blocked
                   and not s.moved and t - s.t0 <= cfg.tap_max_ms
                   and s.max_fingers > 0)
+        if self.tap_pending:
+            # second touch of a tap-and-drag that never moved
+            self._flush_tap()
+            self.drag_until = None
+            if is_tap and s.max_fingers == 1:
+                self._click("left")     # double tap: double click, now
+                return
         if is_tap:
             self._tap(t, s)
+
+    def _flush_tap(self):
+        if self.tap_pending:
+            self.tap_pending = False
+            self._click("left")
 
     def _tap(self, t, s):
         cfg = self.cfg
         self.overview_open = False
         n = s.max_fingers
         if n == 1:
-            self._click("left")
+            if cfg.tap_and_drag:
+                self.tap_pending = True
+            else:
+                self._click("left")
             self.drag_until = t + cfg.tap_drag_window_ms
             self.tap_pos = s.pos
         elif n == 2:
@@ -359,6 +381,9 @@ class Engine:
         if button and not self.button_down:
             self.button_down = True
             self.overview_open = False
+            self._flush_tap()           # keep the tap's click first
+            self.drag_candidate = False
+            self.drag_until = None
             if self.session:
                 self.session.clicked = True
             self.pressed_button = self._which_button()
@@ -452,6 +477,7 @@ class Engine:
             self.dragging = True
             self.drag_candidate = False
             self.drag_until = None
+            self.tap_pending = False    # the tap starts the drag, no click
             self.out.append(("button", "left", True))
 
         if self.mode == "pointer":

@@ -31,7 +31,7 @@ files.
 | Two-finger tap = right click | Same |
 | Three-finger tap | Middle click |
 | Four-finger tap = Action Center | Meta+Alt+N (bind it to Plasma notifications, see below) |
-| Tap-and-drag | Same, with a shorter 250 ms / 8 mm window to avoid accidental drags |
+| Tap-and-drag (tap, then touch again and move) | Same: the tap starts the drag instead of clicking first, with a shorter 250 ms / 8 mm window to avoid accidental drags. Like Windows, a single tap clicks once that window has passed |
 | Right-click zone, two-finger click = right click, resting thumb ignored | Same |
 | No cursor drift while clicking or tapping | Same |
 | Palm check while typing (levels 0-4) | Same levels, level 1 by default |
