@@ -106,6 +106,9 @@ class Config:
     gesture_start_mm: float = 5.0      # swipe start threshold
     gesture4_vertical_mm: float = 2.5  # 4-finger up/down start threshold
     alt_tab_step_mm: float = 10.0
+    alt_tab_rows: bool = True          # up/down in the app switcher: row above/below
+    alt_tab_row_mm: float = 12.0
+    swipe_reverse_mm: float = 10.0     # swipe back without lifting to undo
     swipe3_up: str = "meta+w"          # Task view -> Overview
     swipe3_down: str = "meta+d"        # Show desktop
     swipe3_horizontal: str = "alttab"  # app switcher, like Windows
@@ -174,7 +177,10 @@ class Engine:
         self.swipe_acc = [0.0, 0.0]
         self.swipe_done = False
         self.alt_tab = False
-        self.alt_tab_ref = 0.0
+        self.alt_tab_ref = [0.0, 0.0]
+        self.swipe_dir = None          # direction of the swipe that fired
+        self.swipe_fired = None
+        self.swipe_peak = 0.0
         # tap-and-drag
         self.drag_until = None
         self.drag_candidate = False
@@ -454,6 +460,7 @@ class Engine:
             self.mode = "swipe"
             self.swipe_acc = [0.0, 0.0]
             self.swipe_done = False
+            self.swipe_dir = None
 
     def _finish_mode(self, t):
         if self.mode == "pinch" and self.cfg.pinch_native:
@@ -623,14 +630,10 @@ class Engine:
         self.swipe_acc[0] += dx
         self.swipe_acc[1] += dy
         if self.alt_tab:
-            moved = self.swipe_acc[0] - self.alt_tab_ref
-            while abs(moved) >= cfg.alt_tab_step_mm:
-                step = 1 if moved > 0 else -1
-                self.out.append(("combo", "tab" if step > 0 else "shift+tab"))
-                self.alt_tab_ref += step * cfg.alt_tab_step_mm
-                moved = self.swipe_acc[0] - self.alt_tab_ref
+            self._alt_tab_steps()
             return
         if self.swipe_done:
+            self._swipe_reverse(n)
             return
         ax, ay = self.swipe_acc
         vertical = abs(ay) > abs(ax)
@@ -644,22 +647,74 @@ class Engine:
             direction = "up" if ay < 0 else "down"
         else:
             direction = "left" if ax < 0 else "right"
-        if n == 3:
-            if direction in ("left", "right"):
-                action = cfg.swipe3_horizontal
-            else:
-                action = getattr(cfg, "swipe3_" + direction)
-                if direction == "down" and self.overview_open:
-                    action = cfg.close_overview
-        else:
-            action = getattr(cfg, "swipe4_" + direction)
-            if direction == "down" and self.overview_open:
-                action = cfg.close_overview
+        action = self._swipe_action(n, direction)
         if action == "alttab":
             self.alt_tab = True
-            self.alt_tab_ref = ax
+            self.alt_tab_ref = [ax, ay]
             self.out.append(("keydown", "alt"))
             self.out.append(("combo", "tab" if direction == "right" else "shift+tab"))
         else:
-            self.overview_open = direction == "up" and action == cfg.swipe3_up
-            self._action(action)
+            self._fire_swipe(direction, action)
+
+    def _swipe_action(self, n, direction):
+        cfg = self.cfg
+        if n == 3 and direction in ("left", "right"):
+            return cfg.swipe3_horizontal
+        action = getattr(cfg, "swipe%d_%s" % (3 if n == 3 else 4, direction))
+        if direction == "down" and self.overview_open:
+            action = cfg.close_overview
+        return action
+
+    def _fire_swipe(self, direction, action):
+        self.swipe_dir = direction
+        self.swipe_fired = action
+        self.swipe_peak = self._swipe_pos()
+        self.overview_open = direction == "up" and action == self.cfg.swipe3_up \
+            and action not in ("", "none")
+        self._action(action)
+
+    def _swipe_pos(self):
+        """Finger travel along the fired swipe's direction."""
+        ax, ay = self.swipe_acc
+        return {"up": -ay, "down": ay, "left": -ax, "right": ax}[self.swipe_dir]
+
+    def _swipe_reverse(self, n):
+        """Swipe back without lifting to undo, like Windows (up to look at
+        the open windows, then down to go back)."""
+        if self.swipe_dir is None:
+            return
+        pos = self._swipe_pos()
+        self.swipe_peak = max(self.swipe_peak, pos)
+        if self.swipe_peak - pos < self.cfg.swipe_reverse_mm:
+            return
+        back = {"up": "down", "down": "up", "left": "right",
+                "right": "left"}[self.swipe_dir]
+        if self.swipe_dir == "down" and self.swipe_fired != self.cfg.close_overview:
+            action = self.swipe_fired      # show desktop again restores
+        else:
+            action = self._swipe_action(n, back)
+        if action == "alttab":
+            return
+        self._fire_swipe(back, action)
+
+    def _alt_tab_steps(self):
+        """Move through the app switcher: sideways for the next or previous
+        app, up and down for the row above or below (a grid switcher)."""
+        cfg = self.cfg
+        ref = self.alt_tab_ref
+        while True:
+            mx = self.swipe_acc[0] - ref[0]
+            my = self.swipe_acc[1] - ref[1]
+            if abs(mx) >= cfg.alt_tab_step_mm and abs(mx) >= abs(my):
+                step = 1 if mx > 0 else -1
+                self.out.append(("combo", "tab" if step > 0 else "shift+tab"))
+                ref[0] += step * cfg.alt_tab_step_mm
+                ref[1] = self.swipe_acc[1]   # sideways drift is not a row
+            elif cfg.alt_tab_rows and abs(my) >= cfg.alt_tab_row_mm and \
+                    abs(my) > abs(mx):
+                step = 1 if my > 0 else -1
+                self.out.append(("combo", "down" if step > 0 else "up"))
+                ref[1] += step * cfg.alt_tab_row_mm
+                ref[0] = self.swipe_acc[0]
+            else:
+                return

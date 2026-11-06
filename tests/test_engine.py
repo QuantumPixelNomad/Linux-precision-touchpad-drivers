@@ -417,6 +417,37 @@ class TestSwipes(unittest.TestCase):
         self.assertEqual(p.kinds("combo"), [("combo", "meta+w"), ("combo", "esc"),
                                             ("combo", "meta+d")])
 
+    def test_up_then_back_down_without_lifting(self):
+        p = Pad()
+        p.stroke(self.three, (0, -20), 10)
+        p.stroke([(x, y - 20) for x, y in self.three], (0, 20), 10)
+        self.assertEqual(p.kinds("combo"), [("combo", "meta+w"), ("combo", "esc")])
+        # and up again to look once more
+        p.stroke(self.three, (0, -20), 10)
+        p.lift()
+        self.assertEqual(p.kinds("combo")[-1], ("combo", "meta+w"))
+
+    def test_down_then_back_up_restores(self):
+        p = Pad()
+        p.stroke(self.three, (0, 20), 10)
+        p.stroke([(x, y + 20) for x, y in self.three], (0, -20), 10)
+        self.assertEqual(p.kinds("combo"), [("combo", "meta+d"), ("combo", "meta+d")])
+
+    def test_small_wobble_does_not_undo(self):
+        p = Pad()
+        p.stroke(self.three, (0, -20), 10)
+        p.stroke([(x, y - 20) for x, y in self.three], (0, 5), 5)
+        self.assertEqual(p.kinds("combo"), [("combo", "meta+w")])
+
+    def test_app_switcher_rows(self):
+        p = Pad()
+        p.stroke(self.three, (15, 0), 10)
+        p.stroke([(x + 15, y) for x, y in self.three], (2, 26), 10)
+        p.stroke([(x + 17, y + 26) for x, y in self.three], (0, -15), 10)
+        p.lift()
+        combos = [a[1] for a in p.kinds("combo")]
+        self.assertEqual(combos, ["tab", "down", "down", "up"])
+        self.assertEqual(p.kinds("keyup"), [("keyup", "alt")])
 
 if __name__ == "__main__":
     unittest.main()
