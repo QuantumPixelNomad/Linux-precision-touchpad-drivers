@@ -85,6 +85,7 @@ class Config:
     right_click_zone: bool = True      # RightClickZoneEnabled
     button_zone_mm: float = 12.0       # resting/click strip height
     resting_release_mm: float = 10.0   # resting contact radius
+    resting_pair_ms: float = 150.0     # contacts landing together are fingers
     click_warp_mm: float = 2.7         # click warp-back radius
     # scrolling
     natural_scroll: bool = True        # reverse ("natural") scroll direction
@@ -274,6 +275,16 @@ class Engine:
                     and self.session is None
                 tc = Touch(x=x, y=y, palm=palm or edge or curtain, x0=x, y0=y, t0=t,
                            resting=y > cfg.height_mm - cfg.button_zone_mm)
+                if not tc.palm and not self.button_down:
+                    # fingers that land together (a fast two-finger scroll
+                    # up starts low on the pad) are fingers, not a resting
+                    # thumb plus a pointer finger
+                    mates = [o for o in self.touches.values() if not o.palm
+                             and t - o.t0 <= cfg.resting_pair_ms]
+                    if mates:
+                        tc.resting = False
+                        for o in mates:
+                            o.resting = False
                 self.touches[slot] = tc
             else:
                 tc.x, tc.y = x, y

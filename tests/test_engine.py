@@ -297,6 +297,24 @@ class TestScroll(unittest.TestCase):
         p.stroke([(40, 20), (60, 20)], (0, 20), 20)
         self.assertLess(sum(a[1] for a in p.kinds("scroll")), 0)
 
+    def test_scroll_up_from_bottom_edge_does_not_move_pointer(self):
+        # fast scroll up: one finger lands in the bottom strip, the other
+        # just above it; both are fingers, not a resting thumb
+        p = Pad(inertia=False)
+        p.stroke([(40, 60), (60, 52)], (0, -40), 10)
+        self.assertEqual(p.kinds("move"), [])
+        self.assertTrue(p.kinds("scroll"))
+
+    def test_staggered_scroll_up_from_bottom_edge(self):
+        p = Pad(inertia=False)
+        p.frame({0: (40, 60, False)})
+        p.frame({0: (40, 59, False)})
+        for i in range(10):
+            p.frame({0: (40, 56 - 4 * i, False), 1: (60, 52 - 4 * i, False)},
+                    dt=16.0)
+        self.assertEqual(p.kinds("move"), [])
+        self.assertTrue(p.kinds("scroll"))
+
     def test_inertia_continues_after_lift(self):
         p = Pad()
         p.stroke([(40, 10), (60, 10)], (0, 30), 6)
