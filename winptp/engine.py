@@ -17,7 +17,7 @@ changed in winptp.toml.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Windows default pointer curve (the SmoothMouseXCurve / SmoothMouseYCurve values).
 WIN_CURVE_X = [0.0, 0.43, 1.25, 3.86, 40.0]
@@ -76,6 +76,7 @@ class Config:
     tap_and_drag: bool = True          # TapAndDrag
     tap_max_ms: float = 300.0          # tap timeout
     tap_max_move_mm: float = 3.0       # movement allowed during a tap
+    pointer_settle_ms: float = 25.0    # wait this long for a second finger
     tap_drag_window_ms: float = 250.0  # Windows uses 500; shorter avoids accidental drags
     tap_drag_max_mm: float = 8.0       # second touch must land near the tap
     two_finger_tap_max_mm: float = 50.0  # max finger spread for a two-finger tap
@@ -143,6 +144,8 @@ class Session:
     move_blocked: bool = False
     max_spread: float = 0.0
     pos: tuple = (0.0, 0.0)
+    warp: list = field(default_factory=lambda: [0.0, 0.0])   # moved so far
+    hold: list = field(default_factory=lambda: [0.0, 0.0])   # first frames
 
 
 class Engine:
@@ -158,9 +161,6 @@ class Engine:
         self.press_pos = None
         self.last_key = -1e9
         self.out = []
-        # pointer: motion is held back until the contact is clearly not a
-        # tap (Windows moves, then warps back; holding back is equivalent)
-        self.pending = [0.0, 0.0]
         self.history = []
         # scroll
         self.scroll_axis = None
@@ -319,7 +319,6 @@ class Engine:
         self.session = Session(t0=t, tap_blocked=t - self.last_key < tap_ms,
                                move_blocked=t - self.last_key < move_ms,
                                pos=(f.x, f.y) if f else (0.0, 0.0))
-        self.pending = [0.0, 0.0]
         self.history = []
         if self.drag_until is not None and t < self.drag_until and cfg.tap_and_drag:
             f = next(iter(self._fingers().values()), None)
@@ -344,6 +343,8 @@ class Engine:
         is_tap = (cfg.tap_to_click and not s.clicked and not s.tap_blocked
                   and not s.moved and t - s.t0 <= cfg.tap_max_ms
                   and s.max_fingers > 0)
+        if is_tap and s.warp != [0.0, 0.0]:
+            self.out.append(("move", -s.warp[0], -s.warp[1]))
         if self.tap_pending:
             # second touch of a tap-and-drag that never moved
             self._flush_tap()
@@ -400,7 +401,6 @@ class Engine:
             self.pressed_button = self._which_button()
             live = [tc for tc in self.touches.values() if not tc.palm]
             self.press_pos = {id(tc): (tc.x, tc.y) for tc in live}
-            self.pending = [0.0, 0.0]
             self.history = []
             self.out.append(("button", self.pressed_button, True))
         elif not button and self.button_down:
@@ -428,7 +428,14 @@ class Engine:
 
     def _count_changed(self, t, n):
         self._finish_mode(t)
-        self.pending = [0.0, 0.0]
+        s = self.session
+        if n >= 2 and s and not s.moved and s.warp != [0.0, 0.0]:
+            # a second finger joined right away: the first one's small
+            # moves were the start of a scroll or gesture, so undo them
+            self.out.append(("move", -s.warp[0], -s.warp[1]))
+            s.warp = [0.0, 0.0]
+        if s:
+            s.hold = [0.0, 0.0]
         self.history = []
         if n == 0:
             self.mode = "idle"
@@ -527,16 +534,22 @@ class Engine:
             if math.hypot(tc.x - x0, tc.y - y0) < cfg.click_warp_mm:
                 return
         s = self.session
-        held = s is not None and not s.moved and not self.dragging and \
-            t - tc.t0 <= cfg.tap_max_ms and not self.button_down
-        if held:
-            self.pending[0] += ox
-            self.pending[1] += oy
-            return
-        if self.pending != [0.0, 0.0]:
-            ox += self.pending[0]
-            oy += self.pending[1]
-            self.pending = [0.0, 0.0]
+        if s is not None and not self.button_down and not self.dragging:
+            if t - s.t0 < cfg.pointer_settle_ms:
+                # a two-finger scroll's fingers rarely land in the same
+                # frame: give the second one a moment before moving
+                s.hold[0] += ox
+                s.hold[1] += oy
+                return
+            ox += s.hold[0]
+            oy += s.hold[1]
+            s.hold = [0.0, 0.0]
+        if s is not None:
+            # move straight away (holding small moves back and releasing
+            # them at once made fine adjustments jump); a tap warps the
+            # cursor back before it clicks, as Windows does
+            s.warp[0] += ox
+            s.warp[1] += oy
         self.out.append(("move", ox, oy))
 
     def _two_finger(self, t, dt, dx, dy, fingers):

@@ -181,7 +181,22 @@ class TestTapExtras(unittest.TestCase):
         p = Pad()
         p.stroke([(50, 30)], (2, 0), 5)
         p.lift()
-        self.assertEqual(p.kinds("move"), [])
+        p.wait(300)
+        # the cursor may follow the finger, but it is back before the click
+        self.assertAlmostEqual(sum(a[1] for a in p.kinds("move")), 0.0)
+        self.assertAlmostEqual(sum(a[2] for a in p.kinds("move")), 0.0)
+        last_move = max(i for i, a in enumerate(p.actions) if a[0] == "move")
+        first_click = p.actions.index(("button", "left", True))
+        self.assertLess(last_move, first_click)
+
+    def test_small_slow_move_has_no_jump(self):
+        # nudging the cursor 4 mm over half a second: no frame may carry
+        # the motion of many frames at once
+        p = Pad()
+        p.stroke([(50, 30)], (4, 0), 60)
+        moves = [a[1] for a in p.kinds("move")]
+        self.assertGreater(len(moves), 40)
+        self.assertLess(max(moves), 4 * sum(moves) / len(moves))
 
     def test_wide_two_finger_tap_is_ignored(self):
         p = Pad()
@@ -312,7 +327,8 @@ class TestScroll(unittest.TestCase):
         for i in range(10):
             p.frame({0: (40, 56 - 4 * i, False), 1: (60, 52 - 4 * i, False)},
                     dt=16.0)
-        self.assertEqual(p.kinds("move"), [])
+        # the first finger's nudge before the second landed is undone
+        self.assertAlmostEqual(sum(a[2] for a in p.kinds("move")), 0.0)
         self.assertTrue(p.kinds("scroll"))
 
     def test_inertia_continues_after_lift(self):
