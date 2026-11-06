@@ -33,12 +33,14 @@ files.
 | Four-finger tap = Action Center | Meta+Alt+N (bind it to Plasma notifications, see below) |
 | Tap-and-drag (tap, then touch again and move) | Same: the tap starts the drag instead of clicking first, with a shorter 250 ms / 8 mm window to avoid accidental drags. Like Windows, a single tap clicks once that window has passed |
 | Right-click zone, two-finger click = right click, resting thumb ignored | Same |
-| No cursor drift while clicking or tapping | Same |
+| No cursor drift while clicking or tapping | Same: the cursor follows the finger and a tap puts it back before clicking |
 | Palm check while typing (levels 0-4) | Same levels, level 1 by default |
 | Two-finger scroll with direction lock, notch-per-distance by speed | Same, as hi-res wheel events |
 | Scroll inertia | Exponential decay, tuned by hand |
 | Pinch zoom | Native smooth pinch in apps |
 | 3 fingers up / down / sideways = Task View / Desktop / app switcher | Overview / Show Desktop / Alt+Tab |
+| Swipe back without lifting to undo (up to look, back down) | Same |
+| Up / down in the app switcher = row above / below | Up / Down in Plasma's grid switcher |
 | 4 fingers sideways = switch virtual desktop | Meta+Ctrl+Left/Right |
 
 ## Install
@@ -117,6 +119,8 @@ You can also edit `/etc/winptp/winptp.toml` by hand, then run
 | `aap_threshold` | Palm check while typing, 0 (off) to 4 (strictest) |
 | `typing_tap_block_ms`, `typing_move_block_ms` | Your own palm check delays in ms (-1 = use `aap_threshold`) |
 | `alt_tab_step_mm` | Finger travel per window in the three-finger app switcher |
+| `alt_tab_row_mm` | Finger travel up or down to the next row of the app switcher |
+| `swipe_reverse_mm` | Swipe back this far without lifting to undo a swipe |
 | `gesture_start_mm` | Finger travel before a three/four-finger swipe fires |
 | `tap_three`, `tap_four` | `"middle"` or a key combo like `"meta+alt+n"` |
 | `swipe3_*`, `swipe4_*` | Key combos for each swipe; `"alttab"` holds Alt for the switcher |

@@ -51,7 +51,8 @@ MODES = [("windows", "Windows precision touchpad (winptp does everything)"),
 # Settings that still matter in gestures mode; the rest is libinput's job.
 GESTURE_KEYS = {"mode", "tap_three", "tap_four", "aap_threshold",
                 "typing_tap_block_ms", "typing_move_block_ms",
-                "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm"}
+                "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm",
+                "alt_tab_row_mm", "swipe_reverse_mm"}
 
 # Fine-tuning tab: (group, [(key, label, unit, min, max, step, tooltip)])
 FINE_TUNING = [
@@ -63,6 +64,12 @@ FINE_TUNING = [
         ("alt_tab_step_mm", "App switcher: travel per window", "mm", 2, 50, 0.5,
          "With three fingers held down sideways, how far to move to step "
          "to the next window. Smaller = faster"),
+        ("alt_tab_row_mm", "App switcher: travel per row", "mm", 2, 50, 0.5,
+         "With the app switcher open, how far to move up or down to go to "
+         "the row above or below"),
+        ("swipe_reverse_mm", "Swipe back to undo after", "mm", 2, 50, 0.5,
+         "Without lifting, how far to swipe back to undo the gesture "
+         "(up to see the open windows, then back down)"),
     ]),
     ("Taps", [
         ("tap_max_ms", "Longest tap", "ms", 50, 1000, 10,

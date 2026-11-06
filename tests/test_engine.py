@@ -181,7 +181,22 @@ class TestTapExtras(unittest.TestCase):
         p = Pad()
         p.stroke([(50, 30)], (2, 0), 5)
         p.lift()
-        self.assertEqual(p.kinds("move"), [])
+        p.wait(300)
+        # the cursor may follow the finger, but it is back before the click
+        self.assertAlmostEqual(sum(a[1] for a in p.kinds("move")), 0.0)
+        self.assertAlmostEqual(sum(a[2] for a in p.kinds("move")), 0.0)
+        last_move = max(i for i, a in enumerate(p.actions) if a[0] == "move")
+        first_click = p.actions.index(("button", "left", True))
+        self.assertLess(last_move, first_click)
+
+    def test_small_slow_move_has_no_jump(self):
+        # nudging the cursor 4 mm over half a second: no frame may carry
+        # the motion of many frames at once
+        p = Pad()
+        p.stroke([(50, 30)], (4, 0), 60)
+        moves = [a[1] for a in p.kinds("move")]
+        self.assertGreater(len(moves), 40)
+        self.assertLess(max(moves), 4 * sum(moves) / len(moves))
 
     def test_wide_two_finger_tap_is_ignored(self):
         p = Pad()
@@ -297,6 +312,25 @@ class TestScroll(unittest.TestCase):
         p.stroke([(40, 20), (60, 20)], (0, 20), 20)
         self.assertLess(sum(a[1] for a in p.kinds("scroll")), 0)
 
+    def test_scroll_up_from_bottom_edge_does_not_move_pointer(self):
+        # fast scroll up: one finger lands in the bottom strip, the other
+        # just above it; both are fingers, not a resting thumb
+        p = Pad(inertia=False)
+        p.stroke([(40, 60), (60, 52)], (0, -40), 10)
+        self.assertEqual(p.kinds("move"), [])
+        self.assertTrue(p.kinds("scroll"))
+
+    def test_staggered_scroll_up_from_bottom_edge(self):
+        p = Pad(inertia=False)
+        p.frame({0: (40, 60, False)})
+        p.frame({0: (40, 59, False)})
+        for i in range(10):
+            p.frame({0: (40, 56 - 4 * i, False), 1: (60, 52 - 4 * i, False)},
+                    dt=16.0)
+        # the first finger's nudge before the second landed is undone
+        self.assertAlmostEqual(sum(a[2] for a in p.kinds("move")), 0.0)
+        self.assertTrue(p.kinds("scroll"))
+
     def test_inertia_continues_after_lift(self):
         p = Pad()
         p.stroke([(40, 10), (60, 10)], (0, 30), 6)
@@ -383,6 +417,37 @@ class TestSwipes(unittest.TestCase):
         self.assertEqual(p.kinds("combo"), [("combo", "meta+w"), ("combo", "esc"),
                                             ("combo", "meta+d")])
 
+    def test_up_then_back_down_without_lifting(self):
+        p = Pad()
+        p.stroke(self.three, (0, -20), 10)
+        p.stroke([(x, y - 20) for x, y in self.three], (0, 20), 10)
+        self.assertEqual(p.kinds("combo"), [("combo", "meta+w"), ("combo", "esc")])
+        # and up again to look once more
+        p.stroke(self.three, (0, -20), 10)
+        p.lift()
+        self.assertEqual(p.kinds("combo")[-1], ("combo", "meta+w"))
+
+    def test_down_then_back_up_restores(self):
+        p = Pad()
+        p.stroke(self.three, (0, 20), 10)
+        p.stroke([(x, y + 20) for x, y in self.three], (0, -20), 10)
+        self.assertEqual(p.kinds("combo"), [("combo", "meta+d"), ("combo", "meta+d")])
+
+    def test_small_wobble_does_not_undo(self):
+        p = Pad()
+        p.stroke(self.three, (0, -20), 10)
+        p.stroke([(x, y - 20) for x, y in self.three], (0, 5), 5)
+        self.assertEqual(p.kinds("combo"), [("combo", "meta+w")])
+
+    def test_app_switcher_rows(self):
+        p = Pad()
+        p.stroke(self.three, (15, 0), 10)
+        p.stroke([(x + 15, y) for x, y in self.three], (2, 26), 10)
+        p.stroke([(x + 17, y + 26) for x, y in self.three], (0, -15), 10)
+        p.lift()
+        combos = [a[1] for a in p.kinds("combo")]
+        self.assertEqual(combos, ["tab", "down", "down", "up"])
+        self.assertEqual(p.kinds("keyup"), [("keyup", "alt")])
 
 if __name__ == "__main__":
     unittest.main()

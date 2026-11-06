@@ -17,7 +17,7 @@ changed in winptp.toml.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Windows default pointer curve (the SmoothMouseXCurve / SmoothMouseYCurve values).
 WIN_CURVE_X = [0.0, 0.43, 1.25, 3.86, 40.0]
@@ -76,6 +76,7 @@ class Config:
     tap_and_drag: bool = True          # TapAndDrag
     tap_max_ms: float = 300.0          # tap timeout
     tap_max_move_mm: float = 3.0       # movement allowed during a tap
+    pointer_settle_ms: float = 25.0    # wait this long for a second finger
     tap_drag_window_ms: float = 250.0  # Windows uses 500; shorter avoids accidental drags
     tap_drag_max_mm: float = 8.0       # second touch must land near the tap
     two_finger_tap_max_mm: float = 50.0  # max finger spread for a two-finger tap
@@ -85,6 +86,7 @@ class Config:
     right_click_zone: bool = True      # RightClickZoneEnabled
     button_zone_mm: float = 12.0       # resting/click strip height
     resting_release_mm: float = 10.0   # resting contact radius
+    resting_pair_ms: float = 150.0     # contacts landing together are fingers
     click_warp_mm: float = 2.7         # click warp-back radius
     # scrolling
     natural_scroll: bool = True        # reverse ("natural") scroll direction
@@ -104,6 +106,9 @@ class Config:
     gesture_start_mm: float = 5.0      # swipe start threshold
     gesture4_vertical_mm: float = 2.5  # 4-finger up/down start threshold
     alt_tab_step_mm: float = 10.0
+    alt_tab_rows: bool = True          # up/down in the app switcher: row above/below
+    alt_tab_row_mm: float = 12.0
+    swipe_reverse_mm: float = 10.0     # swipe back without lifting to undo
     swipe3_up: str = "meta+w"          # Task view -> Overview
     swipe3_down: str = "meta+d"        # Show desktop
     swipe3_horizontal: str = "alttab"  # app switcher, like Windows
@@ -142,6 +147,8 @@ class Session:
     move_blocked: bool = False
     max_spread: float = 0.0
     pos: tuple = (0.0, 0.0)
+    warp: list = field(default_factory=lambda: [0.0, 0.0])   # moved so far
+    hold: list = field(default_factory=lambda: [0.0, 0.0])   # first frames
 
 
 class Engine:
@@ -157,9 +164,6 @@ class Engine:
         self.press_pos = None
         self.last_key = -1e9
         self.out = []
-        # pointer: motion is held back until the contact is clearly not a
-        # tap (Windows moves, then warps back; holding back is equivalent)
-        self.pending = [0.0, 0.0]
         self.history = []
         # scroll
         self.scroll_axis = None
@@ -173,7 +177,10 @@ class Engine:
         self.swipe_acc = [0.0, 0.0]
         self.swipe_done = False
         self.alt_tab = False
-        self.alt_tab_ref = 0.0
+        self.alt_tab_ref = [0.0, 0.0]
+        self.swipe_dir = None          # direction of the swipe that fired
+        self.swipe_fired = None
+        self.swipe_peak = 0.0
         # tap-and-drag
         self.drag_until = None
         self.drag_candidate = False
@@ -274,6 +281,16 @@ class Engine:
                     and self.session is None
                 tc = Touch(x=x, y=y, palm=palm or edge or curtain, x0=x, y0=y, t0=t,
                            resting=y > cfg.height_mm - cfg.button_zone_mm)
+                if not tc.palm and not self.button_down:
+                    # fingers that land together (a fast two-finger scroll
+                    # up starts low on the pad) are fingers, not a resting
+                    # thumb plus a pointer finger
+                    mates = [o for o in self.touches.values() if not o.palm
+                             and t - o.t0 <= cfg.resting_pair_ms]
+                    if mates:
+                        tc.resting = False
+                        for o in mates:
+                            o.resting = False
                 self.touches[slot] = tc
             else:
                 tc.x, tc.y = x, y
@@ -308,7 +325,6 @@ class Engine:
         self.session = Session(t0=t, tap_blocked=t - self.last_key < tap_ms,
                                move_blocked=t - self.last_key < move_ms,
                                pos=(f.x, f.y) if f else (0.0, 0.0))
-        self.pending = [0.0, 0.0]
         self.history = []
         if self.drag_until is not None and t < self.drag_until and cfg.tap_and_drag:
             f = next(iter(self._fingers().values()), None)
@@ -333,6 +349,8 @@ class Engine:
         is_tap = (cfg.tap_to_click and not s.clicked and not s.tap_blocked
                   and not s.moved and t - s.t0 <= cfg.tap_max_ms
                   and s.max_fingers > 0)
+        if is_tap and s.warp != [0.0, 0.0]:
+            self.out.append(("move", -s.warp[0], -s.warp[1]))
         if self.tap_pending:
             # second touch of a tap-and-drag that never moved
             self._flush_tap()
@@ -389,7 +407,6 @@ class Engine:
             self.pressed_button = self._which_button()
             live = [tc for tc in self.touches.values() if not tc.palm]
             self.press_pos = {id(tc): (tc.x, tc.y) for tc in live}
-            self.pending = [0.0, 0.0]
             self.history = []
             self.out.append(("button", self.pressed_button, True))
         elif not button and self.button_down:
@@ -417,7 +434,14 @@ class Engine:
 
     def _count_changed(self, t, n):
         self._finish_mode(t)
-        self.pending = [0.0, 0.0]
+        s = self.session
+        if n >= 2 and s and not s.moved and s.warp != [0.0, 0.0]:
+            # a second finger joined right away: the first one's small
+            # moves were the start of a scroll or gesture, so undo them
+            self.out.append(("move", -s.warp[0], -s.warp[1]))
+            s.warp = [0.0, 0.0]
+        if s:
+            s.hold = [0.0, 0.0]
         self.history = []
         if n == 0:
             self.mode = "idle"
@@ -436,6 +460,7 @@ class Engine:
             self.mode = "swipe"
             self.swipe_acc = [0.0, 0.0]
             self.swipe_done = False
+            self.swipe_dir = None
 
     def _finish_mode(self, t):
         if self.mode == "pinch" and self.cfg.pinch_native:
@@ -516,16 +541,22 @@ class Engine:
             if math.hypot(tc.x - x0, tc.y - y0) < cfg.click_warp_mm:
                 return
         s = self.session
-        held = s is not None and not s.moved and not self.dragging and \
-            t - tc.t0 <= cfg.tap_max_ms and not self.button_down
-        if held:
-            self.pending[0] += ox
-            self.pending[1] += oy
-            return
-        if self.pending != [0.0, 0.0]:
-            ox += self.pending[0]
-            oy += self.pending[1]
-            self.pending = [0.0, 0.0]
+        if s is not None and not self.button_down and not self.dragging:
+            if t - s.t0 < cfg.pointer_settle_ms:
+                # a two-finger scroll's fingers rarely land in the same
+                # frame: give the second one a moment before moving
+                s.hold[0] += ox
+                s.hold[1] += oy
+                return
+            ox += s.hold[0]
+            oy += s.hold[1]
+            s.hold = [0.0, 0.0]
+        if s is not None:
+            # move straight away (holding small moves back and releasing
+            # them at once made fine adjustments jump); a tap warps the
+            # cursor back before it clicks, as Windows does
+            s.warp[0] += ox
+            s.warp[1] += oy
         self.out.append(("move", ox, oy))
 
     def _two_finger(self, t, dt, dx, dy, fingers):
@@ -599,14 +630,10 @@ class Engine:
         self.swipe_acc[0] += dx
         self.swipe_acc[1] += dy
         if self.alt_tab:
-            moved = self.swipe_acc[0] - self.alt_tab_ref
-            while abs(moved) >= cfg.alt_tab_step_mm:
-                step = 1 if moved > 0 else -1
-                self.out.append(("combo", "tab" if step > 0 else "shift+tab"))
-                self.alt_tab_ref += step * cfg.alt_tab_step_mm
-                moved = self.swipe_acc[0] - self.alt_tab_ref
+            self._alt_tab_steps()
             return
         if self.swipe_done:
+            self._swipe_reverse(n)
             return
         ax, ay = self.swipe_acc
         vertical = abs(ay) > abs(ax)
@@ -620,22 +647,74 @@ class Engine:
             direction = "up" if ay < 0 else "down"
         else:
             direction = "left" if ax < 0 else "right"
-        if n == 3:
-            if direction in ("left", "right"):
-                action = cfg.swipe3_horizontal
-            else:
-                action = getattr(cfg, "swipe3_" + direction)
-                if direction == "down" and self.overview_open:
-                    action = cfg.close_overview
-        else:
-            action = getattr(cfg, "swipe4_" + direction)
-            if direction == "down" and self.overview_open:
-                action = cfg.close_overview
+        action = self._swipe_action(n, direction)
         if action == "alttab":
             self.alt_tab = True
-            self.alt_tab_ref = ax
+            self.alt_tab_ref = [ax, ay]
             self.out.append(("keydown", "alt"))
             self.out.append(("combo", "tab" if direction == "right" else "shift+tab"))
         else:
-            self.overview_open = direction == "up" and action == cfg.swipe3_up
-            self._action(action)
+            self._fire_swipe(direction, action)
+
+    def _swipe_action(self, n, direction):
+        cfg = self.cfg
+        if n == 3 and direction in ("left", "right"):
+            return cfg.swipe3_horizontal
+        action = getattr(cfg, "swipe%d_%s" % (3 if n == 3 else 4, direction))
+        if direction == "down" and self.overview_open:
+            action = cfg.close_overview
+        return action
+
+    def _fire_swipe(self, direction, action):
+        self.swipe_dir = direction
+        self.swipe_fired = action
+        self.swipe_peak = self._swipe_pos()
+        self.overview_open = direction == "up" and action == self.cfg.swipe3_up \
+            and action not in ("", "none")
+        self._action(action)
+
+    def _swipe_pos(self):
+        """Finger travel along the fired swipe's direction."""
+        ax, ay = self.swipe_acc
+        return {"up": -ay, "down": ay, "left": -ax, "right": ax}[self.swipe_dir]
+
+    def _swipe_reverse(self, n):
+        """Swipe back without lifting to undo, like Windows (up to look at
+        the open windows, then down to go back)."""
+        if self.swipe_dir is None:
+            return
+        pos = self._swipe_pos()
+        self.swipe_peak = max(self.swipe_peak, pos)
+        if self.swipe_peak - pos < self.cfg.swipe_reverse_mm:
+            return
+        back = {"up": "down", "down": "up", "left": "right",
+                "right": "left"}[self.swipe_dir]
+        if self.swipe_dir == "down" and self.swipe_fired != self.cfg.close_overview:
+            action = self.swipe_fired      # show desktop again restores
+        else:
+            action = self._swipe_action(n, back)
+        if action == "alttab":
+            return
+        self._fire_swipe(back, action)
+
+    def _alt_tab_steps(self):
+        """Move through the app switcher: sideways for the next or previous
+        app, up and down for the row above or below (a grid switcher)."""
+        cfg = self.cfg
+        ref = self.alt_tab_ref
+        while True:
+            mx = self.swipe_acc[0] - ref[0]
+            my = self.swipe_acc[1] - ref[1]
+            if abs(mx) >= cfg.alt_tab_step_mm and abs(mx) >= abs(my):
+                step = 1 if mx > 0 else -1
+                self.out.append(("combo", "tab" if step > 0 else "shift+tab"))
+                ref[0] += step * cfg.alt_tab_step_mm
+                ref[1] = self.swipe_acc[1]   # sideways drift is not a row
+            elif cfg.alt_tab_rows and abs(my) >= cfg.alt_tab_row_mm and \
+                    abs(my) > abs(mx):
+                step = 1 if my > 0 else -1
+                self.out.append(("combo", "down" if step > 0 else "up"))
+                ref[1] += step * cfg.alt_tab_row_mm
+                ref[0] = self.swipe_acc[0]
+            else:
+                return
