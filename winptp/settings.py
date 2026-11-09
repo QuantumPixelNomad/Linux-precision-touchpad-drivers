@@ -554,8 +554,8 @@ def build_window(path=CONFIG_PATH):
                 if path == CONFIG_PATH:
                     # the touchpad key may have switched winptp's pads off
                     # in KWin; gestures mode needs its pad copy on
-                    kwin.enable(wait=4.0,
-                                want_passthrough=values.get("mode") == "gestures")
+                    kwin.enable_later(
+                        want_passthrough=values.get("mode") == "gestures")
                     msg += " Service is %s." % service_state()
             self._status(msg, error=not ok)
 
