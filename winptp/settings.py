@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tomllib
 
+from . import kwin
 from .engine import AAP_LEVELS, Config
 
 CONFIG_PATH = "/etc/winptp/winptp.toml"
@@ -551,6 +552,10 @@ def build_window(path=CONFIG_PATH):
             if ok:
                 self.values, self.text = values, new_text
                 if path == CONFIG_PATH:
+                    # the touchpad key may have switched winptp's pads off
+                    # in KWin; gestures mode needs its pad copy on
+                    kwin.enable(wait=4.0,
+                                want_passthrough=values.get("mode") == "gestures")
                     msg += " Service is %s." % service_state()
             self._status(msg, error=not ok)
 

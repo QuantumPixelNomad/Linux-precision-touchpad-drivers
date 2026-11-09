@@ -9,7 +9,8 @@ trap 'rm -rf "$root"' EXIT
 
 install -d "$root/DEBIAN" "$root/opt/winptp/winptp" "$root/etc/winptp" \
   "$root/usr/lib/systemd/system" "$root/usr/share/doc/winptp" "$root/usr/bin" \
-  "$root/usr/share/applications" "$root/usr/share/polkit-1/actions"
+  "$root/usr/share/applications" "$root/usr/share/polkit-1/actions" \
+  "$root/etc/xdg/autostart"
 install -m 644 "$here"/winptp/*.py "$root/opt/winptp/winptp/"
 install -m 644 "$here/packaging/winptp.toml" "$root/etc/winptp/"
 install -m 644 "$here/packaging/winptp.service" "$here/packaging/winptp-resume.service" \
@@ -17,6 +18,7 @@ install -m 644 "$here/packaging/winptp.service" "$here/packaging/winptp-resume.s
 install -m 755 "$here/packaging/winptp-apply" "$root/opt/winptp/"
 install -m 755 "$here/packaging/winptp-settings" "$root/usr/bin/"
 install -m 644 "$here/packaging/winptp-settings.desktop" "$root/usr/share/applications/"
+install -m 644 "$here/packaging/winptp-kwin.desktop" "$root/etc/xdg/autostart/"
 install -m 644 "$here/packaging/io.github.quantumpixelnomad.winptp.policy" \
   "$root/usr/share/polkit-1/actions/"
 install -m 644 "$here/README.md" "$root/usr/share/doc/winptp/"

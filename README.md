@@ -145,6 +145,11 @@ fire twice. Fingers that libinput already saw are released only after its
 tap timeout, so a three-finger tap whose fingers land a moment apart is
 never read as a two-finger tap.
 
+The touchpad on/off key (Fn key or Plasma's touchpad toggle) also switches
+off winptp's virtual touchpads, and Plasma remembers that. winptp switches
+them back on whenever you press Apply in the settings app and at every
+login. To do it by hand, run `PYTHONPATH=/opt/winptp python3 -m winptp.kwin`.
+
 ## Uninstall
 
     sudo apt remove winptp      # if you used the .deb

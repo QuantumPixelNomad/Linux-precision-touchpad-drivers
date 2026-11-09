@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=winptp: keep touchpad enabled
+Comment=Switch winptp's virtual touchpads on in KWin at login
+Exec=/bin/sh -c "PYTHONPATH=/opt/winptp exec /usr/bin/python3 -m winptp.kwin --wait 30"
+OnlyShowIn=KDE;
+NoDisplay=true
+X-KDE-autostart-phase=2
