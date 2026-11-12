@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tomllib
 
+from . import kwin
 from .engine import AAP_LEVELS, Config
 
 CONFIG_PATH = "/etc/winptp/winptp.toml"
@@ -52,7 +53,8 @@ MODES = [("windows", "Windows precision touchpad (winptp does everything)"),
 GESTURE_KEYS = {"mode", "tap_three", "tap_four", "aap_threshold",
                 "typing_tap_block_ms", "typing_move_block_ms",
                 "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm",
-                "alt_tab_row_mm", "swipe_reverse_mm"}
+                "alt_tab_row_mm", "swipe_reverse_mm", "edge_scroll",
+                "edge_scroll_zone_mm", "edge_scroll_rate", "edge_scroll_release_mm"}
 
 # Fine-tuning tab: (group, [(key, label, unit, min, max, step, tooltip)])
 FINE_TUNING = [
@@ -79,6 +81,16 @@ FINE_TUNING = [
          "Time after a tap in which touching again starts a drag"),
         ("tap_drag_max_mm", "Tap-and-drag: touch again within", "mm", 1, 40, 0.5,
          "How close to the tap the second touch must land"),
+    ]),
+    ("Drag at the edge (auto-scroll)", [
+        ("edge_scroll_zone_mm", "Starts this close to the edge", "mm", 1, 20, 0.5,
+         "While dragging, a finger this close to an edge of the touchpad "
+         "scrolls the page that way"),
+        ("edge_scroll_rate", "Scroll speed at the edge", "notches/s", 1, 40, 0.5,
+         "Mouse-wheel notches per second with the finger right at the edge. "
+         "Less near the start of the zone; doubles over two seconds of holding"),
+        ("edge_scroll_release_mm", "Pull back to stop", "mm", 0.5, 10, 0.5,
+         "How far to move the finger back from the edge to stop"),
     ]),
     ("Scrolling and zoom", [
         ("inertia_tau_ms", "Inertia glide", "ms", 50, 2000, 25,
@@ -404,6 +416,11 @@ def build_window(path=CONFIG_PATH):
             self._check(form, "two_finger_tap", "Tap with two fingers to right-click")
             self._check(form, "tap_and_drag", "Double-tap and drag to multi-select",
                         "Tap, then touch again quickly and move to drag")
+            self._check(form, "edge_scroll",
+                        "Keep going when a drag reaches the edge (auto-scroll)",
+                        "While selecting or dragging, hold the finger at the edge "
+                        "of the touchpad and the page scrolls that way, wherever "
+                        "the pointer is. Pull back slightly to stop")
             self._check(form, "right_click_zone",
                         "Press the bottom-right corner to right-click")
             for key, label in (("tap_three", "Three-finger tap:"),
@@ -551,6 +568,10 @@ def build_window(path=CONFIG_PATH):
             if ok:
                 self.values, self.text = values, new_text
                 if path == CONFIG_PATH:
+                    # the touchpad key may have switched winptp's pads off
+                    # in KWin; gestures mode needs its pad copy on
+                    kwin.enable_later(
+                        want_passthrough=values.get("mode") == "gestures")
                     msg += " Service is %s." % service_state()
             self._status(msg, error=not ok)
 

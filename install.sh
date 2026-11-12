@@ -28,24 +28,17 @@ for kv in PointerAccelerationProfile=1 PointerAcceleration=0 ScrollFactor=1; do
     --group 20564 --group "winptp pointer" --key "${kv%%=*}" "${kv#*=}"
 done
 
-# Pinch zoom reaches apps through the virtual "winptp touchpad". The
-# touchpad on/off key (or Plasma's touchpad toggle) switches off every
-# touchpad, this one included, and KWin remembers it: keep it on.
-sudo -u "$user" kwriteconfig6 --file kcminputrc --group Libinput --group 7531 \
-  --group 20566 --group "winptp touchpad" --key Enabled true
-
 sudo systemctl daemon-reload
 sudo systemctl enable winptp-resume.service
 sudo systemctl enable --now winptp.service
 sudo systemctl restart winptp.service
 sleep 1
-# and switch it on in the running session too
-for d in /sys/class/input/event*; do
-  if [ "$(cat "$d/device/name" 2>/dev/null)" = "winptp touchpad" ]; then
-    sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" busctl --user \
-      set-property org.kde.KWin "/org/kde/KWin/InputDevice/${d##*/}" \
-      org.kde.KWin.InputDevice enabled b true 2>/dev/null || true
-  fi
-done
+# The touchpad on/off key switches winptp's virtual touchpads off in KWin
+# too (pinch zoom, and the gestures-mode copy of the pad): switch them on
+# now, and at every login.
+sudo install -D -m 644 "$here/packaging/winptp-kwin.desktop" \
+  /etc/xdg/autostart/winptp-kwin.desktop
+sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" \
+  PYTHONPATH=/opt/winptp python3 -m winptp.kwin --wait 5 || true
 systemctl --no-pager --lines=5 status winptp.service || true
 echo "winptp installed. Settings: run winptp-settings, or edit /etc/winptp/winptp.toml"
