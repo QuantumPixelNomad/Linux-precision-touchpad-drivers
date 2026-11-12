@@ -274,6 +274,9 @@ class GestureGate:
     """
 
     ALLOWED = ("combo", "keydown", "keyup", "button")
+    # edge auto-scroll during a libinput drag; the engine only tracks the
+    # drag to know when to scroll, its own clicks and moves are dropped
+    ALWAYS = ("keyup", "edge_scroll", "edge_move")
 
     def __init__(self):
         self.multi = False
@@ -291,7 +294,7 @@ class GestureGate:
 
     def _filter(self, actions, multi):
         return [a for a in actions
-                if a[0] == "keyup" or multi and a[0] in self.ALLOWED]
+                if a[0] in self.ALWAYS or multi and a[0] in self.ALLOWED]
 
 
 def gestures_only(cfg):
@@ -299,10 +302,15 @@ def gestures_only(cfg):
 
     tap_to_click stays on for the engine: 3/4-finger taps are winptp's, and
     one/two-finger taps are dropped by the action filter in run().
+    tap_and_drag stays on too, with libinput's timing, so the engine can
+    tell when libinput is dragging and scroll at the edge; the clicks it
+    makes for that are dropped by the filter as well.
     """
     cfg.tap_to_click = True
-    for k in ("two_finger_tap", "tap_and_drag", "inertia", "pinch_zoom",
-              "pinch_native"):
+    cfg.tap_and_drag = cfg.edge_scroll
+    cfg.tap_drag_window_ms = 180.0      # libinput's tap timeout
+    cfg.tap_drag_max_mm = 1000.0        # libinput doesn't check distance
+    for k in ("two_finger_tap", "inertia", "pinch_zoom", "pinch_native"):
         setattr(cfg, k, False)
 
 
@@ -337,6 +345,8 @@ class Output:
         p_dirty = k_dirty = False
         for a in actions:
             kind = a[0]
+            if kind.startswith("edge_"):
+                kind = kind[5:]
             if kind == "move":
                 self.rem[0] += a[1]
                 self.rem[1] += a[2]

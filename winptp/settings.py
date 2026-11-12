@@ -53,7 +53,8 @@ MODES = [("windows", "Windows precision touchpad (winptp does everything)"),
 GESTURE_KEYS = {"mode", "tap_three", "tap_four", "aap_threshold",
                 "typing_tap_block_ms", "typing_move_block_ms",
                 "gesture_start_mm", "gesture4_vertical_mm", "alt_tab_step_mm",
-                "alt_tab_row_mm", "swipe_reverse_mm"}
+                "alt_tab_row_mm", "swipe_reverse_mm", "edge_scroll",
+                "edge_scroll_zone_mm", "edge_scroll_rate", "edge_scroll_release_mm"}
 
 # Fine-tuning tab: (group, [(key, label, unit, min, max, step, tooltip)])
 FINE_TUNING = [

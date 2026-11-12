@@ -32,7 +32,7 @@ files.
 | Three-finger tap | Middle click |
 | Four-finger tap = Action Center | Meta+Alt+N (bind it to Plasma notifications, see below) |
 | Tap-and-drag (tap, then touch again and move) | Same: the tap starts the drag instead of clicking first, with a shorter 250 ms / 8 mm window to avoid accidental drags. Like Windows, a single tap clicks once that window has passed |
-| Drag to the edge of the touchpad while selecting | The page scrolls that way straight away, wherever the pointer is, for as long as the finger stays at the edge, and the selection grows with it; pull the finger back slightly to stop. Works for tap-and-drag and click-and-drag. Turn off with `edge_scroll = false` |
+| Drag to the edge of the touchpad while selecting | The page scrolls that way straight away, wherever the pointer is, for as long as the finger stays at the edge, and the selection grows with it; pull the finger back slightly to stop. Works for tap-and-drag and click-and-drag, in both Windows and Plasma default mode. Turn off with `edge_scroll = false` |
 | Right-click zone, two-finger click = right click, resting thumb ignored | Same |
 | No cursor drift while clicking or tapping | Same: the cursor follows the finger and a tap puts it back before clicking |
 | Palm check while typing (levels 0-4) | Same levels, level 1 by default |
@@ -145,6 +145,11 @@ four-finger swipes and taps are winptp's and Plasma's own gestures never
 fire twice. Fingers that libinput already saw are released only after its
 tap timeout, so a three-finger tap whose fingers land a moment apart is
 never read as a two-finger tap.
+
+Edge auto-scroll works here too. winptp follows libinput's tap-and-drag
+(a second touch within libinput's 180 ms tap timeout) and click-and-drag,
+and while such a drag is held at an edge of the pad it sends the scrolling
+from its own virtual mouse. It never clicks for one finger itself.
 
 The touchpad on/off key (Fn key or Plasma's touchpad toggle) also switches
 off winptp's virtual touchpads, and Plasma remembers that. winptp switches

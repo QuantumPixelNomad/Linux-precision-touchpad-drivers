@@ -10,6 +10,8 @@ timestamp in milliseconds) and returns a list of output actions:
     ("combo", "meta+w")                            # press and release
     ("keydown", "alt") / ("keyup", "alt")
     ("zoom", +1 | -1)                              # ctrl+wheel step
+    ("edge_scroll", v, h) / ("edge_move", dx, dy)  # edge auto-scroll: same
+        as scroll / move, but they also pass in gestures mode
 
 The default values are measured from how a Windows 10 precision touchpad
 behaves, so the feel matches Windows out of the box. Every value can be
@@ -357,7 +359,7 @@ class Engine:
             self.dragging = False
             self.drag_candidate = False
             self.drag_until = None
-            self.out.append(("button", "left", False))
+            self._left(False)
             return
         self.drag_candidate = False
         is_tap = (cfg.tap_to_click and not s.clicked and not s.tap_blocked
@@ -370,7 +372,8 @@ class Engine:
             self._flush_tap()
             self.drag_until = None
             if is_tap and s.max_fingers == 1:
-                self._click("left")     # double tap: double click, now
+                self._left(True)     # double tap: double click, now
+                self._left(False)
                 return
         if is_tap:
             self._tap(t, s)
@@ -378,7 +381,8 @@ class Engine:
     def _flush_tap(self):
         if self.tap_pending:
             self.tap_pending = False
-            self._click("left")
+            self._left(True)
+            self._left(False)
 
     def _tap(self, t, s):
         cfg = self.cfg
@@ -388,7 +392,8 @@ class Engine:
             if cfg.tap_and_drag:
                 self.tap_pending = True
             else:
-                self._click("left")
+                self._left(True)
+                self._left(False)
             self.drag_until = t + cfg.tap_drag_window_ms
             self.tap_pos = s.pos
         elif n == 2:
@@ -398,6 +403,13 @@ class Engine:
             self._action(cfg.tap_three)
         else:
             self._action(cfg.tap_four)
+
+    def _left(self, pressed):
+        """Left button for one-finger taps and drags. In gestures mode
+        libinput does those itself; the engine only follows along to know
+        when a drag is on (for edge auto-scroll)."""
+        if self.cfg.mode != "gestures":
+            self.out.append(("button", "left", pressed))
 
     def _click(self, name):
         self.out.append(("button", name, True))
@@ -503,7 +515,7 @@ class Engine:
         cfg = self.cfg
         fingers = self._fingers()
         held = self.dragging or (self.button_down and self.pressed_button == "left")
-        if not (cfg.edge_scroll and cfg.mode == "windows" and held
+        if not (cfg.edge_scroll and held
                 and self.mode == "pointer" and len(fingers) == 1):
             self._edge_reset()
             return
@@ -556,14 +568,14 @@ class Engine:
         units = self.cfg.edge_scroll_rate * 120.0 / 1000.0 * dt * ramp
         # wheel up is positive; reaching the bottom edge scrolls down
         # whatever natural_scroll says, like dragging past a window's edge
-        self.out.append(("scroll", -self.edge_dir[1] * units,
+        self.out.append(("edge_scroll", -self.edge_dir[1] * units,
                          self.edge_dir[0] * units))
         if t - self.edge_jig_t >= 60.0:
             # a 1 px wiggle, so apps re-check what is under the pointer as
             # the page scrolls and the selection follows
             self.edge_jig_t = t
             self.edge_jig = 1 - self.edge_jig
-            self.out.append(("move", 0.0, 1.0 if self.edge_jig else -1.0))
+            self.out.append(("edge_move", 0.0, 1.0 if self.edge_jig else -1.0))
 
     def _edge_reset(self):
         self.edge = {"x": [False, 0.0, 0.0], "y": [False, 0.0, 0.0]}
@@ -572,7 +584,7 @@ class Engine:
 
     def _edge_stop(self):
         if getattr(self, "edge_jig", 0):
-            self.out.append(("move", 0.0, -1.0))   # undo the wiggle
+            self.out.append(("edge_move", 0.0, -1.0))   # undo the wiggle
         self.edge_dir = (0.0, 0.0)
         self.edge_jig = 0
 
@@ -595,7 +607,7 @@ class Engine:
             self.drag_candidate = False
             self.drag_until = None
             self.tap_pending = False    # the tap starts the drag, no click
-            self.out.append(("button", "left", True))
+            self._left(True)
 
         if self.mode == "pointer":
             if s and s.move_blocked and not self.dragging:
