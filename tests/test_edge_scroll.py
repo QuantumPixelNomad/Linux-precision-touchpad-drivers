@@ -1,4 +1,4 @@
-"""Edge auto-scroll: a drag held at the pad's edge keeps the pointer going."""
+"""Edge auto-scroll: a drag held at the pad's edge scrolls the page."""
 
 import os
 import sys
@@ -12,7 +12,13 @@ H = 67.0   # default pad height (mm)
 
 
 def moves(actions):
-    return [a for a in actions if a[0] == "move"]
+    """Scrolling while held (the 1 px wiggles alone don't count)."""
+    return [a for a in actions if a[0] == "scroll"]
+
+
+def net_move(actions):
+    return (sum(a[1] for a in actions if a[0] == "move"),
+            sum(a[2] for a in actions if a[0] == "move"))
 
 
 class EdgeScroll(unittest.TestCase):
@@ -31,14 +37,43 @@ class EdgeScroll(unittest.TestCase):
         p.wait(ms)
         return moves(p.actions)
 
-    def test_held_at_bottom_keeps_moving_down(self):
+    def test_held_at_bottom_scrolls_down_at_once(self):
         p = self.tap_drag_to_bottom()
         m = self.held_moves(p, 500)
         self.assertGreater(len(m), 30)
-        self.assertTrue(all(dy > 0 and dx == 0 for _, dx, dy in m))
-        # 800 px/s at the very edge, 1 mm from it is a little less
-        self.assertTrue(250 < sum(dy for _, _, dy in m) < 420)
+        # wheel down (negative), nothing sideways, from the first tick on
+        self.assertTrue(all(v < 0 and h == 0 for _, v, h in m))
+        self.assertTrue(p.actions[0][0] == "scroll" or p.actions[1][0] == "scroll")
+        # 5 notches/s at the edge, 1 mm short of it is a little less
+        notches = -sum(v for _, v, _ in m) / 120
+        self.assertTrue(1.8 < notches < 3.0, notches)
         self.assertIsNotNone(p.e.next_timeout(p.t))
+        # the pointer itself stays put: only +-1 px wiggles
+        self.assertIn(net_move(p.actions)[1], (0.0, 1.0))
+
+    def test_scroll_ignores_natural_scroll(self):
+        p = self.tap_drag_to_bottom(natural_scroll=False)
+        self.assertTrue(all(v < 0 for _, v, _ in self.held_moves(p, 200)))
+
+    def test_speeds_up_while_held(self):
+        p = self.tap_drag_to_bottom()
+        first = -sum(v for _, v, _ in self.held_moves(p, 500))
+        self.held_moves(p, 1500)
+        later = -sum(v for _, v, _ in self.held_moves(p, 500))
+        self.assertGreater(later, first * 1.6)
+
+    def test_wiggle_is_undone_on_stop(self):
+        p = self.tap_drag_to_bottom()
+        p.actions = []
+        for ms in (60, 70, 130):
+            p.wait(ms)
+            p.stroke([(50, H - 1.0)], (0, -15), 3)   # off the edge
+            p.stroke([(50, H - 16.0)], (0, 15), 3)   # and back
+        p.stroke([(50, H - 1.0)], (0, -15), 3)
+        wiggles = [a for a in p.actions if a[0] == "move" and a[1] == 0.0
+                   and abs(a[2]) == 1.0]
+        self.assertTrue(wiggles)
+        self.assertEqual(sum(a[2] for a in wiggles), 0.0)
 
     def test_pulling_back_slightly_stops(self):
         p = self.tap_drag_to_bottom()
@@ -61,22 +96,23 @@ class EdgeScroll(unittest.TestCase):
         self.assertEqual(self.held_moves(p, 300), [])
         self.assertIsNone(p.e.next_timeout(p.t))
 
-    def test_top_and_sides(self):
+    def test_top_left_corner(self):
         p = Pad()
         p.stroke([(50, 30)], (0, 0), 5)
         p.lift()
         p.frame({}, dt=60)
-        p.stroke([(50, 30)], (-49.5, -29.5), 25)    # top-left corner
+        p.stroke([(50, 30)], (-49.5, -29.5), 25)
         m = self.held_moves(p, 300)
         self.assertTrue(m)
-        self.assertTrue(all(dx < 0 and dy < 0 for _, dx, dy in m))
+        # wheel up, and left on the horizontal wheel
+        self.assertTrue(all(v > 0 and h < 0 for _, v, h in m))
 
     def test_click_and_drag(self):
         p = Pad()
         p.stroke([(50, 30)], (0, 0), 3, button=True)
         p.stroke([(50, 30)], (0, H - 1.0 - 30), 20, button=True)
         m = self.held_moves(p, 300)
-        self.assertTrue(m and all(dy > 0 for _, _, dy in m))
+        self.assertTrue(m and all(v < 0 for _, v, _ in m))
         p.stroke([(50, H - 1.0)], (0, 0), 1, button=False)   # release
         self.assertEqual(self.held_moves(p, 300), [])
 

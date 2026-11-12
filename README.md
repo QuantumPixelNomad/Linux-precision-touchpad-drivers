@@ -32,7 +32,7 @@ files.
 | Three-finger tap | Middle click |
 | Four-finger tap = Action Center | Meta+Alt+N (bind it to Plasma notifications, see below) |
 | Tap-and-drag (tap, then touch again and move) | Same: the tap starts the drag instead of clicking first, with a shorter 250 ms / 8 mm window to avoid accidental drags. Like Windows, a single tap clicks once that window has passed |
-| Drag to the edge of the touchpad while selecting | The pointer keeps moving that way while the finger stays at the edge, so the document scrolls and the selection grows; pull the finger back slightly to stop. Works for tap-and-drag and click-and-drag. Turn off with `edge_scroll = false` |
+| Drag to the edge of the touchpad while selecting | The page scrolls that way straight away, wherever the pointer is, for as long as the finger stays at the edge, and the selection grows with it; pull the finger back slightly to stop. Works for tap-and-drag and click-and-drag. Turn off with `edge_scroll = false` |
 | Right-click zone, two-finger click = right click, resting thumb ignored | Same |
 | No cursor drift while clicking or tapping | Same: the cursor follows the finger and a tap puts it back before clicking |
 | Palm check while typing (levels 0-4) | Same levels, level 1 by default |

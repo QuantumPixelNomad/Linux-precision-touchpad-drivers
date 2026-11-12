@@ -84,10 +84,10 @@ FINE_TUNING = [
     ("Drag at the edge (auto-scroll)", [
         ("edge_scroll_zone_mm", "Starts this close to the edge", "mm", 1, 20, 0.5,
          "While dragging, a finger this close to an edge of the touchpad "
-         "keeps the pointer moving that way"),
-        ("edge_scroll_speed", "Pointer speed at the edge", "px/s", 100, 4000, 50,
-         "How fast the pointer keeps moving with the finger right at the "
-         "edge (a quarter of this where the zone begins)"),
+         "scrolls the page that way"),
+        ("edge_scroll_rate", "Scroll speed at the edge", "notches/s", 1, 40, 0.5,
+         "Mouse-wheel notches per second with the finger right at the edge. "
+         "Less near the start of the zone; doubles over two seconds of holding"),
         ("edge_scroll_release_mm", "Pull back to stop", "mm", 0.5, 10, 0.5,
          "How far to move the finger back from the edge to stop"),
     ]),
@@ -418,8 +418,8 @@ def build_window(path=CONFIG_PATH):
             self._check(form, "edge_scroll",
                         "Keep going when a drag reaches the edge (auto-scroll)",
                         "While selecting or dragging, hold the finger at the edge "
-                        "of the touchpad and the pointer keeps moving that way, "
-                        "so the page scrolls. Pull back slightly to stop")
+                        "of the touchpad and the page scrolls that way, wherever "
+                        "the pointer is. Pull back slightly to stop")
             self._check(form, "right_click_zone",
                         "Press the bottom-right corner to right-click")
             for key, label in (("tap_three", "Three-finger tap:"),

@@ -80,11 +80,12 @@ class Config:
     tap_drag_window_ms: float = 250.0  # Windows uses 500; shorter avoids accidental drags
     tap_drag_max_mm: float = 8.0       # second touch must land near the tap
     # edge auto-scroll: while dragging (tap-and-drag or click-and-drag), a
-    # finger held at the edge of the pad keeps the pointer moving that way,
-    # so a selection keeps growing and the app scrolls, as on Windows
+    # finger held at the edge of the pad scrolls the page that way straight
+    # away, wherever the pointer is, so a selection keeps growing
     edge_scroll: bool = True
     edge_scroll_zone_mm: float = 5.0   # how close to the edge it starts
-    edge_scroll_speed: float = 800.0   # pointer speed at the very edge (px/s)
+    edge_scroll_rate: float = 5.0      # wheel notches per second at the edge
+                                       # (doubles over 2 s of holding)
     edge_scroll_release_mm: float = 1.0  # pull back this far to stop
     two_finger_tap_max_mm: float = 50.0  # max finger spread for a two-finger tap
     tap_three: str = "middle"          # Windows option: middle mouse button
@@ -197,7 +198,7 @@ class Engine:
         # and not a double click (which maximizes a window by its title bar)
         self.tap_pending = False
         # edge auto-scroll
-        self.edge_t = 0.0
+        self.edge_t = self.edge_t0 = self.edge_jig_t = 0.0
         self._edge_reset()
         self.prev = {}
         self.prev_count = 0
@@ -267,12 +268,7 @@ class Engine:
                 self.inertia_v = (v, h)
                 self.out.append(("scroll", v * dt, h * dt))
         if self.edge_dir != (0.0, 0.0):
-            dt = max(0.0, min(50.0, t - self.edge_t))
-            self.edge_t = t
-            if dt:
-                speed = self.cfg.edge_scroll_speed / 1000.0 * dt
-                self.out.append(("move", self.edge_dir[0] * speed,
-                                 self.edge_dir[1] * speed))
+            self._edge_scroll(t)
         return self.out
 
     def next_timeout(self, t):
@@ -539,18 +535,46 @@ class Engine:
                     st[0], st[2] = True, depth      # pushed in again
                 else:
                     st[2] = min(st[2], depth)
-            push.append(sign * (0.25 + 0.75 * min(1.0, depth / zone))
+            push.append(sign * (0.4 + 0.6 * min(1.0, depth / zone))
                         if st[0] else 0.0)
         new = (push[0], push[1])
-        if new != (0.0, 0.0) and self.edge_dir == (0.0, 0.0):
-            self.edge_t = t
-        self.edge_dir = new
+        if new == (0.0, 0.0):
+            self._edge_stop()
+        else:
+            if self.edge_dir == (0.0, 0.0):
+                self.edge_t = self.edge_t0 = self.edge_jig_t = t
+            self.edge_dir = new
         self.edge_live = True
+
+    def _edge_scroll(self, t):
+        """Scroll the page while a drag is held at the edge."""
+        dt = max(0.0, min(50.0, t - self.edge_t))
+        self.edge_t = t
+        if not dt:
+            return
+        ramp = 1.0 + min(1.0, (t - self.edge_t0) / 2000.0)
+        units = self.cfg.edge_scroll_rate * 120.0 / 1000.0 * dt * ramp
+        # wheel up is positive; reaching the bottom edge scrolls down
+        # whatever natural_scroll says, like dragging past a window's edge
+        self.out.append(("scroll", -self.edge_dir[1] * units,
+                         self.edge_dir[0] * units))
+        if t - self.edge_jig_t >= 60.0:
+            # a 1 px wiggle, so apps re-check what is under the pointer as
+            # the page scrolls and the selection follows
+            self.edge_jig_t = t
+            self.edge_jig = 1 - self.edge_jig
+            self.out.append(("move", 0.0, 1.0 if self.edge_jig else -1.0))
 
     def _edge_reset(self):
         self.edge = {"x": [False, 0.0, 0.0], "y": [False, 0.0, 0.0]}
-        self.edge_dir = (0.0, 0.0)
+        self._edge_stop()
         self.edge_live = False
+
+    def _edge_stop(self):
+        if getattr(self, "edge_jig", 0):
+            self.out.append(("move", 0.0, -1.0))   # undo the wiggle
+        self.edge_dir = (0.0, 0.0)
+        self.edge_jig = 0
 
     def _spread(self):
         f = list(self._fingers().values())
