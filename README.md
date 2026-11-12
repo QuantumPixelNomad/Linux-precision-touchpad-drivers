@@ -32,6 +32,7 @@ files.
 | Three-finger tap | Middle click |
 | Four-finger tap = Action Center | Meta+Alt+N (bind it to Plasma notifications, see below) |
 | Tap-and-drag (tap, then touch again and move) | Same: the tap starts the drag instead of clicking first, with a shorter 250 ms / 8 mm window to avoid accidental drags. Like Windows, a single tap clicks once that window has passed |
+| Drag to the edge of the touchpad while selecting | The pointer keeps moving that way while the finger stays at the edge, so the document scrolls and the selection grows; pull the finger back slightly to stop. Works for tap-and-drag and click-and-drag. Turn off with `edge_scroll = false` |
 | Right-click zone, two-finger click = right click, resting thumb ignored | Same |
 | No cursor drift while clicking or tapping | Same: the cursor follows the finger and a tap puts it back before clicking |
 | Palm check while typing (levels 0-4) | Same levels, level 1 by default |
@@ -85,7 +86,7 @@ the app launcher, or run `winptp-settings` in a terminal.
 | Tab | What you can change |
 |---|---|
 | **Pointer** | Cursor speed (1-20, like the Windows slider), display scale, and how long the touchpad ignores you after you type. Pick a level, or tick *Set my own delays* to set the tap and movement delays in milliseconds. |
-| **Taps** | Tap to click, two-finger tap for right click, tap-and-drag, the bottom-right right-click corner, and what three- and four-finger taps do. |
+| **Taps** | Tap to click, two-finger tap for right click, tap-and-drag, auto-scroll when a drag reaches the edge, the bottom-right right-click corner, and what three- and four-finger taps do. |
 | **Scroll & zoom** | Natural scrolling, scroll inertia, pinch to zoom. |
 | **Gestures** | What each three- and four-finger swipe does. Pick a preset (Overview, Show desktop, app switcher, next/previous desktop, notifications) or type any key combo such as `ctrl+alt+t`. |
 | **Fine-tuning** | Distances and timings: how far to swipe before a gesture fires, how far to move per window in the three-finger app switcher, tap and tap-and-drag limits, how long scrolling glides, and the edge zones. |

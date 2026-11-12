@@ -81,6 +81,16 @@ FINE_TUNING = [
         ("tap_drag_max_mm", "Tap-and-drag: touch again within", "mm", 1, 40, 0.5,
          "How close to the tap the second touch must land"),
     ]),
+    ("Drag at the edge (auto-scroll)", [
+        ("edge_scroll_zone_mm", "Starts this close to the edge", "mm", 1, 20, 0.5,
+         "While dragging, a finger this close to an edge of the touchpad "
+         "keeps the pointer moving that way"),
+        ("edge_scroll_speed", "Pointer speed at the edge", "px/s", 100, 4000, 50,
+         "How fast the pointer keeps moving with the finger right at the "
+         "edge (a quarter of this where the zone begins)"),
+        ("edge_scroll_release_mm", "Pull back to stop", "mm", 0.5, 10, 0.5,
+         "How far to move the finger back from the edge to stop"),
+    ]),
     ("Scrolling and zoom", [
         ("inertia_tau_ms", "Inertia glide", "ms", 50, 2000, 25,
          "How long scrolling keeps gliding after the fingers lift. "
@@ -405,6 +415,11 @@ def build_window(path=CONFIG_PATH):
             self._check(form, "two_finger_tap", "Tap with two fingers to right-click")
             self._check(form, "tap_and_drag", "Double-tap and drag to multi-select",
                         "Tap, then touch again quickly and move to drag")
+            self._check(form, "edge_scroll",
+                        "Keep going when a drag reaches the edge (auto-scroll)",
+                        "While selecting or dragging, hold the finger at the edge "
+                        "of the touchpad and the pointer keeps moving that way, "
+                        "so the page scrolls. Pull back slightly to stop")
             self._check(form, "right_click_zone",
                         "Press the bottom-right corner to right-click")
             for key, label in (("tap_three", "Three-finger tap:"),

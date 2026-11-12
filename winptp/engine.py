@@ -79,6 +79,13 @@ class Config:
     pointer_settle_ms: float = 25.0    # wait this long for a second finger
     tap_drag_window_ms: float = 250.0  # Windows uses 500; shorter avoids accidental drags
     tap_drag_max_mm: float = 8.0       # second touch must land near the tap
+    # edge auto-scroll: while dragging (tap-and-drag or click-and-drag), a
+    # finger held at the edge of the pad keeps the pointer moving that way,
+    # so a selection keeps growing and the app scrolls, as on Windows
+    edge_scroll: bool = True
+    edge_scroll_zone_mm: float = 5.0   # how close to the edge it starts
+    edge_scroll_speed: float = 800.0   # pointer speed at the very edge (px/s)
+    edge_scroll_release_mm: float = 1.0  # pull back this far to stop
     two_finger_tap_max_mm: float = 50.0  # max finger spread for a two-finger tap
     tap_three: str = "middle"          # Windows option: middle mouse button
     tap_four: str = "meta+alt+n"       # Windows: Action Center -> notifications
@@ -189,6 +196,9 @@ class Engine:
         # window (as on Windows), so tap + touch-and-move is a plain drag
         # and not a double click (which maximizes a window by its title bar)
         self.tap_pending = False
+        # edge auto-scroll
+        self.edge_t = 0.0
+        self._edge_reset()
         self.prev = {}
         self.prev_count = 0
         self.history = []
@@ -235,6 +245,7 @@ class Engine:
         self.prev_count = n
         if n == 0 and not self.touches and self.session is not None:
             self._end_session(t)
+        self._edge_update(t)
         return self.out
 
     def tick(self, t):
@@ -255,11 +266,18 @@ class Engine:
             else:
                 self.inertia_v = (v, h)
                 self.out.append(("scroll", v * dt, h * dt))
+        if self.edge_dir != (0.0, 0.0):
+            dt = max(0.0, min(50.0, t - self.edge_t))
+            self.edge_t = t
+            if dt:
+                speed = self.cfg.edge_scroll_speed / 1000.0 * dt
+                self.out.append(("move", self.edge_dir[0] * speed,
+                                 self.edge_dir[1] * speed))
         return self.out
 
     def next_timeout(self, t):
         """Milliseconds until tick() needs to run, or None."""
-        if self.inertia_v is not None:
+        if self.inertia_v is not None or self.edge_dir != (0.0, 0.0):
             return 8.0
         if self.drag_until is not None:
             return max(0.0, self.drag_until - t)
@@ -483,6 +501,56 @@ class Engine:
         if not ds:
             return 0.0, 0.0
         return (sum(d[0] for d in ds) / len(ds), sum(d[1] for d in ds) / len(ds))
+
+    def _edge_update(self, t):
+        """Edge auto-scroll: work out which way a held drag pushes."""
+        cfg = self.cfg
+        fingers = self._fingers()
+        held = self.dragging or (self.button_down and self.pressed_button == "left")
+        if not (cfg.edge_scroll and cfg.mode == "windows" and held
+                and self.mode == "pointer" and len(fingers) == 1):
+            self._edge_reset()
+            return
+        tc = next(iter(fingers.values()))
+        zone = max(cfg.edge_scroll_zone_mm, 0.1)
+        rel = cfg.edge_scroll_release_mm
+        push = []
+        for axis, pos, size in (("x", tc.x, cfg.width_mm), ("y", tc.y, cfg.height_mm)):
+            if pos > size - zone:
+                sign, depth = 1.0, pos - (size - zone)
+            elif pos < zone:
+                sign, depth = -1.0, zone - pos
+            else:
+                sign, depth = 0.0, 0.0
+            st = self.edge[axis]        # [active, sign, reference depth]
+            if sign == 0.0:
+                st[:] = [False, 0.0, 0.0]
+            elif st[1] != sign:
+                # just reached this edge. A drag that starts in the zone
+                # waits until the finger pushes further in.
+                st[:] = [self.edge_live, sign, depth]
+            elif st[0]:
+                if depth < st[2] - rel:
+                    st[0], st[2] = False, depth     # pulled back: stop
+                else:
+                    st[2] = max(st[2], depth)
+            else:
+                if depth > st[2] + rel:
+                    st[0], st[2] = True, depth      # pushed in again
+                else:
+                    st[2] = min(st[2], depth)
+            push.append(sign * (0.25 + 0.75 * min(1.0, depth / zone))
+                        if st[0] else 0.0)
+        new = (push[0], push[1])
+        if new != (0.0, 0.0) and self.edge_dir == (0.0, 0.0):
+            self.edge_t = t
+        self.edge_dir = new
+        self.edge_live = True
+
+    def _edge_reset(self):
+        self.edge = {"x": [False, 0.0, 0.0], "y": [False, 0.0, 0.0]}
+        self.edge_dir = (0.0, 0.0)
+        self.edge_live = False
 
     def _spread(self):
         f = list(self._fingers().values())
