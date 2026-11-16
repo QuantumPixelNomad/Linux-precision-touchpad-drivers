@@ -9,7 +9,8 @@ timestamp in milliseconds) and returns a list of output actions:
     ("button", "left"|"right"|"middle", pressed)
     ("combo", "meta+w")                            # press and release
     ("keydown", "alt") / ("keyup", "alt")
-    ("zoom", +1 | -1)                              # ctrl+wheel step
+    ("zoom", wheel_units)                          # wheel while Ctrl is held
+        (a Ctrl+wheel pinch is ("keydown", "ctrl"), zooms, ("keyup", "ctrl"))
     ("edge_scroll", v, h) / ("edge_move", dx, dy)  # edge auto-scroll: same
         as scroll / move, but they also pass in gestures mode
 
@@ -111,7 +112,13 @@ class Config:
     # pinch
     pinch_zoom: bool = True            # ZoomEnabled
     pinch_native: bool = True          # real touchpad pinch (smooth zoom in apps)
-    pinch_mm_per_step: float = 10.0    # finger travel per zoom step
+    pinch_mm_per_step: float = 10.0    # finger travel per Ctrl+wheel notch
+    # How a pinch reaches apps: "native" = touchpad pinch gesture (smooth
+    # zoom where the app supports it), "wheel" = Ctrl+wheel everywhere,
+    # "auto" = native, but Ctrl+wheel while one of pinch_wheel_apps has
+    # focus (apps that ignore Linux pinch gestures, e.g. egui/winit apps).
+    pinch_method: str = "auto"
+    pinch_wheel_apps: tuple = ("pdfcraft",)   # matched in the focused window's app id
     # 3/4-finger gestures
     gesture_start_mm: float = 5.0      # swipe start threshold
     gesture4_vertical_mm: float = 2.5  # 4-finger up/down start threshold
@@ -183,6 +190,10 @@ class Engine:
         self.two_start = {}
         # pinch
         self.pinch_ref = 0.0
+        self.pinch_wheel = False       # this pinch zooms with Ctrl+wheel
+        # () -> focused window's app id (lowercase, "" if unknown); set by
+        # the daemon, used by pinch_method = "auto"
+        self.focused_app = None
         # swipe
         self.swipe_acc = [0.0, 0.0]
         self.swipe_done = False
@@ -488,9 +499,22 @@ class Engine:
             self.swipe_done = False
             self.swipe_dir = None
 
+    def _pinch_uses_wheel(self):
+        cfg = self.cfg
+        if not cfg.pinch_native or cfg.pinch_method == "wheel":
+            return True
+        if cfg.pinch_method != "auto" or not self.focused_app:
+            return False
+        app = (self.focused_app() or "").lower()
+        return bool(app) and any(a.strip().lower() in app
+                                 for a in cfg.pinch_wheel_apps if a.strip())
+
     def _finish_mode(self, t):
-        if self.mode == "pinch" and self.cfg.pinch_native:
-            self.out.append(("pinch_end",))
+        if self.mode == "pinch":
+            if self.pinch_wheel:
+                self.out.append(("keyup", "ctrl"))
+            else:
+                self.out.append(("pinch_end",))
         if self.mode == "scroll" and self.cfg.inertia:
             v, h = self.scroll_v
             if math.hypot(v, h) >= self.cfg.inertia_min_speed:
@@ -679,6 +703,9 @@ class Engine:
             if cfg.pinch_zoom and (cos <= -cfg.pan_cos or
                                    spread_change > max(la, lb) * 0.8):
                 self.mode = "pinch"
+                self.pinch_wheel = self._pinch_uses_wheel()
+                if self.pinch_wheel:
+                    self.out.append(("keydown", "ctrl"))
             elif cos >= cfg.pan_cos and self._spread() <= cfg.pan_max_separation_mm:
                 self.mode = "scroll"
                 mx, my = (ax + bx) / 2, (ay + by) / 2
@@ -696,19 +723,19 @@ class Engine:
                 return
             if self.session:
                 self.session.moved = True
-        if self.mode == "pinch" and cfg.pinch_native:
+        if self.mode == "pinch" and not self.pinch_wheel:
             # replay the two contacts on a virtual touchpad so apps get a
             # real pinch gesture (Windows sends DirectManipulation zoom)
             self.out.append(("pinch", {s: (tc.x, tc.y) for s, tc in fingers.items()}))
             return
         if self.mode == "pinch":
+            # hi-res wheel with Ctrl held: smooth zoom in apps that read
+            # fractional wheel steps, whole notches for the rest
             spread = self._spread()
-            diff = spread - self.pinch_ref
-            while abs(diff) >= cfg.pinch_mm_per_step:
-                step = 1 if diff > 0 else -1
-                self.out.append(("zoom", step))
-                self.pinch_ref += step * cfg.pinch_mm_per_step
-                diff = spread - self.pinch_ref
+            units = (spread - self.pinch_ref) * 120.0 / cfg.pinch_mm_per_step
+            if units:
+                self.out.append(("zoom", units))
+                self.pinch_ref = spread
             return
         if self.scroll_axis == "v":
             dx = 0.0

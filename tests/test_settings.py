@@ -44,6 +44,15 @@ class RenderTest(unittest.TestCase):
         out = settings.render_config("", {"tap_four": 'a"b\\c'})
         self.assertEqual(tomllib.loads(out)["tap_four"], 'a"b\\c')
 
+    def test_pinch_app_list_round_trip(self):
+        values = settings.default_config()
+        self.assertEqual(settings.changed_keys(dict(values, pinch_wheel_apps=["pdfcraft"]), ""), {})
+        values["pinch_wheel_apps"] = settings.parse_app_list(" PdfCraft, Foo ,, ")
+        values["pinch_method"] = "wheel"
+        text = settings.render_config("", settings.changed_keys(values, ""))
+        self.assertIn('pinch_wheel_apps = ["pdfcraft", "foo"]', text)
+        self.assertIn('pinch_method = "wheel"', text)
+
     def test_changed_keys_skips_defaults(self):
         values = settings.default_config()
         values["inertia"] = False

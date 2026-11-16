@@ -297,6 +297,26 @@ class GestureGate:
                 if a[0] in self.ALWAYS or multi and a[0] in self.ALLOWED]
 
 
+def focused_app(runtime_root="/run/user"):
+    """App id of the focused window, as winptp.focus last wrote it for the
+    most recent desktop session (lowercase; "" if unknown)."""
+    best, best_t = "", -1.0
+    try:
+        users = os.listdir(runtime_root)
+    except OSError:
+        return ""
+    for u in users:
+        path = os.path.join(runtime_root, u, "winptp-focus")
+        try:
+            t = os.stat(path).st_mtime
+            if t > best_t:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    best, best_t = f.read(512).strip().lower(), t
+        except OSError:
+            continue
+    return best
+
+
 def gestures_only(cfg):
     """Turn off what libinput does itself in gestures mode.
 
@@ -342,7 +362,7 @@ class Output:
             self.pinchpad.close()
 
     def apply(self, actions):
-        p_dirty = k_dirty = False
+        p_dirty = False
         for a in actions:
             kind = a[0]
             if kind.startswith("edge_"):
@@ -368,13 +388,8 @@ class Output:
                 self.pointer.write(e.EV_KEY, BUTTONS[a[1]], 1 if a[2] else 0)
                 self.pointer.syn()
             elif kind == "zoom":
-                self._key(e.KEY_LEFTCTRL, 1)
-                self.keys.syn()
-                self.pointer.write(e.EV_REL, e.REL_WHEEL_HI_RES, 120 * a[1])
-                self.pointer.write(e.EV_REL, e.REL_WHEEL, a[1])
-                self.pointer.syn()
-                self._key(e.KEY_LEFTCTRL, 0)
-                self.keys.syn()
+                # the engine holds Ctrl for the whole pinch
+                p_dirty |= self._wheel(0, a[1], e.REL_WHEEL_HI_RES, e.REL_WHEEL)
             elif kind == "pinch":
                 if self.pinchpad:
                     self.pinchpad.frame(a[1])
@@ -384,12 +399,13 @@ class Output:
             elif kind == "combo":
                 self.combo(a[1])
             elif kind in ("keydown", "keyup"):
+                if p_dirty:     # keep the order: wheel before a Ctrl release
+                    self.pointer.syn()
+                    p_dirty = False
                 self._key(KEYS[a[1]], 1 if kind == "keydown" else 0)
-                k_dirty = True
+                self.keys.syn()
         if p_dirty:
             self.pointer.syn()
-        if k_dirty:
-            self.keys.syn()
 
     def _wheel(self, axis, units, hi_code, lo_code):
         if not units:
@@ -504,7 +520,8 @@ def run(cfg, name_hint=None, dry_run=False):
     pinchpad = passthrough = None
     if gestures and not dry_run:
         passthrough = Passthrough(pad)
-    if not dry_run and cfg.pinch_native:
+    engine.focused_app = focused_app
+    if not dry_run and cfg.pinch_native and cfg.pinch_method != "wheel":
         try:
             pinchpad = PinchPad(pad, reader)
         except (OSError, TypeError) as err:

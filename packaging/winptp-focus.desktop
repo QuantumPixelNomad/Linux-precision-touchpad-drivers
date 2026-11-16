@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=winptp: app focus for pinch zoom
+Comment=Tell winptp which app has focus, so pinch zoom can use Ctrl+wheel in apps without pinch gestures
+Exec=/bin/sh -c "PYTHONPATH=/opt/winptp exec /usr/bin/python3 -m winptp.focus"
+OnlyShowIn=KDE;
+NoDisplay=true
+X-KDE-autostart-phase=2

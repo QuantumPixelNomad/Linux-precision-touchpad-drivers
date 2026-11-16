@@ -38,6 +38,13 @@ sleep 1
 # now, and at every login.
 sudo install -D -m 644 "$here/packaging/winptp-kwin.desktop" \
   /etc/xdg/autostart/winptp-kwin.desktop
+# Pinch zoom in apps without Linux pinch gestures (PdfCraft): winptp needs
+# to know which app has focus. Started at every login; start it now too.
+sudo install -D -m 644 "$here/packaging/winptp-focus.desktop" \
+  /etc/xdg/autostart/winptp-focus.desktop
+sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u "$user")/bus" \
+  PYTHONPATH=/opt/winptp setsid python3 -m winptp.focus >/dev/null 2>&1 < /dev/null &
 sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" \
   PYTHONPATH=/opt/winptp python3 -m winptp.kwin --wait 5 || true
 systemctl --no-pager --lines=5 status winptp.service || true

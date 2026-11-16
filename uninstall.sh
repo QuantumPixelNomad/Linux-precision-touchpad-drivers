@@ -5,7 +5,8 @@ sudo systemctl disable --now winptp.service winptp-resume.service 2>/dev/null ||
 sudo rm -f /etc/systemd/system/winptp.service /etc/systemd/system/winptp-resume.service \
   /etc/modules-load.d/winptp.conf
 sudo rm -rf /opt/winptp
-sudo rm -f /usr/local/bin/winptp-settings /usr/local/share/applications/winptp-settings.desktop /etc/xdg/autostart/winptp-kwin.desktop \
+sudo rm -f /usr/local/bin/winptp-settings /usr/local/share/applications/winptp-settings.desktop /etc/xdg/autostart/winptp-kwin.desktop /etc/xdg/autostart/winptp-focus.desktop \
   /usr/share/polkit-1/actions/io.github.quantumpixelnomad.winptp.policy
+pkill -u "${SUDO_USER:-$USER}" -f "winptp.focus" 2>/dev/null || true
 sudo systemctl daemon-reload
 echo "winptp removed (settings kept in /etc/winptp)."

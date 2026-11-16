@@ -364,16 +364,72 @@ class TestPinch(unittest.TestCase):
         p = Pad(pinch_native=False)
         for i in range(20):
             p.frame({0: (45 - i, 30, False), 1: (55 + i, 30, False)})
+        p.lift()
         zooms = p.kinds("zoom")
         self.assertTrue(zooms)
-        self.assertTrue(all(z[1] == 1 for z in zooms))
+        self.assertTrue(all(z[1] > 0 for z in zooms))
+        # 2 x 19 mm of spread at 10 mm per notch
+        self.assertAlmostEqual(sum(z[1] for z in zooms), 120 * 3.8, delta=120 * 0.8)
         self.assertEqual(p.kinds("scroll"), [])
 
     def test_pinch_zooms_out(self):
         p = Pad(pinch_native=False)
         for i in range(20):
             p.frame({0: (25 + i, 30, False), 1: (75 - i, 30, False)})
-        self.assertTrue(all(z[1] == -1 for z in p.kinds("zoom")))
+        self.assertTrue(p.kinds("zoom"))
+        self.assertTrue(all(z[1] < 0 for z in p.kinds("zoom")))
+
+    def test_wheel_pinch_holds_ctrl_throughout(self):
+        p = Pad(pinch_method="wheel")
+        for i in range(20):
+            p.frame({0: (45 - i, 30, False), 1: (55 + i, 30, False)})
+        p.lift()
+        kinds = [a[0] for a in p.actions if a[0] in ("keydown", "keyup", "zoom", "pinch")]
+        self.assertEqual(kinds[0], "keydown")
+        self.assertEqual(kinds[-1], "keyup")
+        self.assertEqual(set(kinds[1:-1]), {"zoom"})
+        self.assertEqual(p.kinds("keydown"), [("keydown", "ctrl")])
+        self.assertEqual(p.kinds("keyup"), [("keyup", "ctrl")])
+        self.assertEqual(p.kinds("pinch_end"), [])
+
+    def _auto(self, focused, **cfg):
+        p = Pad(**cfg)
+        p.e.focused_app = lambda: focused
+        for i in range(20):
+            p.frame({0: (45 - i, 30, False), 1: (55 + i, 30, False)})
+        p.lift()
+        return p
+
+    def test_auto_uses_wheel_in_listed_app(self):
+        # snap / AppImage builds of PdfCraft report different ids
+        for app in ("pdfcraft_pdfcraft pdfcraft pdfcraft",
+                    "ai.storyteller.pdfcraft ai.storyteller.pdfcraft pdfcraft"):
+            p = self._auto(app)
+            self.assertTrue(p.kinds("zoom"), app)
+            self.assertEqual(p.kinds("pinch"), [], app)
+
+    def test_auto_stays_native_elsewhere(self):
+        for app in ("firefox_firefox firefox firefox", "", None):
+            p = self._auto(app)
+            self.assertTrue(p.kinds("pinch"))
+            self.assertEqual(p.kinds("zoom"), [])
+            self.assertEqual(p.kinds("keydown"), [])
+
+    def test_native_method_ignores_app_list(self):
+        p = self._auto("pdfcraft", pinch_method="native")
+        self.assertTrue(p.kinds("pinch"))
+        self.assertEqual(p.kinds("zoom"), [])
+
+    def test_custom_app_list(self):
+        p = self._auto("org.example.viewer", pinch_wheel_apps=("Example",))
+        self.assertTrue(p.kinds("zoom"))
+
+    def test_third_finger_releases_ctrl(self):
+        p = Pad(pinch_method="wheel")
+        for i in range(10):
+            p.frame({0: (45 - i, 30, False), 1: (55 + i, 30, False)})
+        p.frame({0: (35, 30, False), 1: (65, 30, False), 2: (50, 50, False)})
+        self.assertEqual(p.kinds("keyup"), [("keyup", "ctrl")])
 
 
 class TestSwipes(unittest.TestCase):

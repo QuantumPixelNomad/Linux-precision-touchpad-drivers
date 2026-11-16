@@ -18,6 +18,8 @@ right_click_zone = true      # press the bottom-right corner to right-click
 natural_scroll = true        # true = content follows your fingers
 inertia = true
 pinch_zoom = true            # native smooth pinch (Ctrl+wheel fallback)
+pinch_method = "auto"        # "native", "wheel" (Ctrl+wheel everywhere), or "auto":
+pinch_wheel_apps = ["pdfcraft"]   # ...apps that get Ctrl+wheel in "auto" (no Linux pinch support)
 
 swipe3_up = "meta+w"         # Task view -> Plasma Overview
 swipe3_down = "meta+d"       # Show desktop

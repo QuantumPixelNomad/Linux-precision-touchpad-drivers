@@ -18,7 +18,8 @@ install -m 644 "$here/packaging/winptp.service" "$here/packaging/winptp-resume.s
 install -m 755 "$here/packaging/winptp-apply" "$root/opt/winptp/"
 install -m 755 "$here/packaging/winptp-settings" "$root/usr/bin/"
 install -m 644 "$here/packaging/winptp-settings.desktop" "$root/usr/share/applications/"
-install -m 644 "$here/packaging/winptp-kwin.desktop" "$root/etc/xdg/autostart/"
+install -m 644 "$here/packaging/winptp-kwin.desktop" "$here/packaging/winptp-focus.desktop" \
+  "$root/etc/xdg/autostart/"
 install -m 644 "$here/packaging/io.github.quantumpixelnomad.winptp.policy" \
   "$root/usr/share/polkit-1/actions/"
 install -m 644 "$here/README.md" "$root/usr/share/doc/winptp/"

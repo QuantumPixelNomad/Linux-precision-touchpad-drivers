@@ -38,7 +38,7 @@ files.
 | Palm check while typing (levels 0-4) | Same levels, level 1 by default |
 | Two-finger scroll with direction lock, notch-per-distance by speed | Same, as hi-res wheel events |
 | Scroll inertia | Exponential decay, tuned by hand |
-| Pinch zoom | Native smooth pinch in apps |
+| Pinch zoom | Native smooth pinch in apps; Ctrl+wheel in apps that ignore Linux pinch gestures (PdfCraft) |
 | 3 fingers up / down / sideways = Task View / Desktop / app switcher | Overview / Show Desktop / Alt+Tab |
 | Swipe back without lifting to undo (up to look, back down) | Same |
 | Up / down in the app switcher = row above / below | Up / Down in Plasma's grid switcher |
@@ -87,7 +87,7 @@ the app launcher, or run `winptp-settings` in a terminal.
 |---|---|
 | **Pointer** | Cursor speed (1-20, like the Windows slider), display scale, and how long the touchpad ignores you after you type. Pick a level, or tick *Set my own delays* to set the tap and movement delays in milliseconds. |
 | **Taps** | Tap to click, two-finger tap for right click, tap-and-drag, auto-scroll when a drag reaches the edge, the bottom-right right-click corner, and what three- and four-finger taps do. |
-| **Scroll & zoom** | Natural scrolling, scroll inertia, pinch to zoom. |
+| **Scroll & zoom** | Natural scrolling, scroll inertia, pinch to zoom, and whether a pinch reaches apps as a native pinch or as Ctrl+wheel (see below). |
 | **Gestures** | What each three- and four-finger swipe does. Pick a preset (Overview, Show desktop, app switcher, next/previous desktop, notifications) or type any key combo such as `ctrl+alt+t`. |
 | **Fine-tuning** | Distances and timings: how far to swipe before a gesture fires, how far to move per window in the three-finger app switcher, tap and tap-and-drag limits, how long scrolling glides, and the edge zones. |
 
@@ -128,6 +128,28 @@ You can also edit `/etc/winptp/winptp.toml` by hand, then run
 
 In the default mode the Touchpad page in System Settings has no effect,
 because winptp owns the touchpad. See gestures mode below to change that.
+
+## Pinch zoom in apps that ignore pinch gestures
+
+winptp sends a pinch as a real touchpad pinch gesture, which browsers,
+Okular, Gwenview and most Qt/GTK apps turn into smooth zoom. Some apps
+never receive pinch gestures on Linux at all, whatever the touchpad
+driver does: apps built on egui/winit, such as **PdfCraft**, because winit
+only reads pinch gestures on macOS and iOS. They do zoom with Ctrl+wheel.
+
+So in those apps winptp turns the pinch into Ctrl+wheel instead (fine
+hi-res wheel steps, so the zoom is still smooth). The default
+`pinch_method = "auto"` does this for the apps in `pinch_wheel_apps`
+(default `["pdfcraft"]`) and keeps the native pinch everywhere else. Add
+another app by a piece of its name or id, in the settings app's
+**Scroll & zoom** tab or in `winptp.toml`. `pinch_method = "wheel"` uses
+Ctrl+wheel in every app; `"native"` never does.
+
+To know which app has focus, a small helper (`winptp.focus`) runs in your
+Plasma session, started at login. It loads a tiny KWin script that
+reports each window you switch to. Right after installing, log out and
+in once, or open the settings app, which starts it. This works in Windows
+mode; in gestures mode pinches are libinput's own.
 
 ## Gestures mode: stock Plasma touchpad plus winptp's swipes
 

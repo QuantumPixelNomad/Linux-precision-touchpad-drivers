@@ -46,6 +46,12 @@ SWIPE_PRESETS = [
 
 DPI_SCALES = [100, 125, 150, 175, 200]
 
+PINCH_METHODS = [
+    ("auto", "Native pinch; Ctrl+wheel in the apps listed below"),
+    ("native", "Native pinch gesture everywhere"),
+    ("wheel", "Ctrl+wheel everywhere"),
+]
+
 MODES = [("windows", "Windows precision touchpad (winptp does everything)"),
          ("gestures", "Plasma default, plus winptp's 3/4-finger gestures")]
 
@@ -96,8 +102,8 @@ FINE_TUNING = [
         ("inertia_tau_ms", "Inertia glide", "ms", 50, 2000, 25,
          "How long scrolling keeps gliding after the fingers lift. "
          "Larger = longer glide"),
-        ("pinch_mm_per_step", "Pinch: travel per zoom step", "mm", 2, 40, 0.5,
-         "Used when native pinch is unavailable (Ctrl+wheel zoom)"),
+        ("pinch_mm_per_step", "Pinch: travel per Ctrl+wheel notch", "mm", 2, 40, 0.5,
+         "How far the fingers spread or close per wheel notch when a pinch zooms with Ctrl+wheel"),
     ]),
     ("Edges", [
         ("button_zone_mm", "Click strip at the bottom", "mm", 0, 30, 0.5,
@@ -123,6 +129,11 @@ def read_config(path=CONFIG_PATH):
             if k in values:
                 values[k] = v
     return values, text
+
+
+def parse_app_list(text):
+    """"pdfcraft, Foo" -> ["pdfcraft", "foo"] (the pinch_wheel_apps list)."""
+    return [a.strip().lower() for a in text.split(",") if a.strip()]
 
 
 def valid_action(spec, taps=False):
@@ -181,8 +192,10 @@ def changed_keys(values, text):
     """Settings worth writing: already in the file, or not at their default."""
     in_file = tomllib.loads(text) if text else {}
     defaults = default_config()
+    def norm(v):
+        return list(v) if isinstance(v, tuple) else v
     return {k: v for k, v in values.items()
-            if k in in_file or v != defaults[k]}
+            if k in in_file or norm(v) != norm(defaults[k])}
 
 
 def apply_config(new_text):
@@ -213,6 +226,17 @@ def service_state():
         return r.stdout.strip() or "unknown"
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
+
+
+def focus_helper():
+    """Start the focus helper if this session has none yet (installed
+    before it existed, or it crashed); it exits if one is running."""
+    try:
+        subprocess.Popen([sys.executable, "-m", "winptp.focus"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- Qt window
@@ -436,6 +460,24 @@ def build_window(path=CONFIG_PATH):
                         "Off = Windows \"Down motion scrolls down\" setting")
             self._check(form, "inertia", "Keep scrolling after the fingers lift (inertia)")
             self._check(form, "pinch_zoom", "Pinch to zoom")
+            method = QtWidgets.QComboBox()
+            for value, label in PINCH_METHODS:
+                method.addItem(label, value)
+            method.setToolTip(
+                "Native pinch gives smooth zoom in browsers, Okular, Gwenview and "
+                "most apps. Some apps (PdfCraft and other egui/winit apps) never "
+                "get pinch gestures on Linux but do zoom with Ctrl+wheel.")
+            form.addRow("Pinch sends:", method)
+            self.fields["pinch_method"] = method
+            apps = QtWidgets.QLineEdit()
+            apps.setPlaceholderText("pdfcraft, another-app")
+            apps.setToolTip("Part of the app's name or id, separated by commas. "
+                            "Matched against the focused window's app id.")
+            form.addRow("Ctrl+wheel apps:", apps)
+            self.fields["pinch_wheel_apps"] = apps
+            method.currentIndexChanged.connect(
+                lambda _: apps.setEnabled(method.currentData() == "auto"
+                                          and method.isEnabled()))
             return page
 
         def _gestures_tab(self):
@@ -491,7 +533,9 @@ def build_window(path=CONFIG_PATH):
                     w.set_value(str(v))
                 elif isinstance(w, QtWidgets.QDoubleSpinBox):
                     w.setValue(float(v))
-                elif key == "mode":
+                elif isinstance(w, QtWidgets.QLineEdit):
+                    w.setText(", ".join(v))
+                elif key in ("mode", "pinch_method"):
                     w.setCurrentIndex(max(w.findData(str(v)), 0))
                 elif key == "screen_dpi":
                     i = w.findData(float(v))
@@ -524,6 +568,8 @@ def build_window(path=CONFIG_PATH):
                     values[key] = w.value()
                 elif isinstance(w, QtWidgets.QDoubleSpinBox):
                     values[key] = w.value()
+                elif isinstance(w, QtWidgets.QLineEdit):
+                    values[key] = parse_app_list(w.text())
                 else:
                     values[key] = w.currentData()
             if not self.custom_typing.isChecked():
@@ -588,6 +634,7 @@ def main(argv=None):
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("winptp-settings")
     app.setDesktopFileName("winptp-settings")
+    focus_helper()
     path = argv[1] if len(argv) > 1 else CONFIG_PATH
     w = build_window(path)
     w.show()
